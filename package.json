@@ -1,0 +1,13 @@
+{
+  "name": "ai-target-strike",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AI TARGET STRIKE - 2-Player Competitive Event & Live Queue Management System",
+  "scripts": {
+    "dev": "npm --prefix teamnexus/frontend run dev",
+    "build": "npm --prefix teamnexus/frontend run build",
+    "preview": "npm --prefix teamnexus/frontend run preview",
+    "backend": "powershell -Command \"$env:PYTHONPATH='teamnexus/backend'; .\\teamnexus\\backend\\venv\\Scripts\\python.exe teamnexus/backend/run.py\"",
+    "start": "powershell -Command \".\\run_all.bat\""
+  }
+}
