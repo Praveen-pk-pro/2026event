@@ -21,6 +21,6 @@ echo  - Live Queue (Projector):    http://localhost:5173/queue
 echo  - Live Scoreboard:           http://localhost:5173/leaderboard
 echo  - Admin Command Console:     http://localhost:5173/admin
 echo.
-echo  Default Admin Credentials:   admin / adminPassword2026!
+echo  Admin credentials must be configured in teamnexus\backend\.env.
 echo ====================================================================
 pause

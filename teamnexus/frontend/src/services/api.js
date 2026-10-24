@@ -1,6 +1,36 @@
-const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api';
+function resolveInitialBaseUrl() {
+  if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_BASE_URL) {
+    return import.meta.env.VITE_API_BASE_URL;
+  }
+  if (typeof window !== 'undefined' && window.location) {
+    const { port, hostname } = window.location;
+    // When running under Vite Dev Server (port 5173), use Vite's configured /api proxy
+    if (port === '5173') {
+      return '/api';
+    }
+    // When running directly from Flask backend (port 5000)
+    if (port === '5000') {
+      return '/api';
+    }
+    // When running on Live Server (port 5500, 5501), static server (8000, 8080, 3000), or file preview
+    // Route directly to the Flask backend server on port 5000
+    const host = (hostname === 'localhost' || hostname === '127.0.0.1' || !hostname) ? '127.0.0.1' : hostname;
+    return `http://${host}:5000/api`;
+  }
+  return '/api';
+}
+
+let BASE_URL = resolveInitialBaseUrl();
 
 class ApiService {
+  getBaseUrl() {
+    return BASE_URL;
+  }
+
+  setBaseUrl(newUrl) {
+    BASE_URL = newUrl;
+  }
+
   getAuthHeaders() {
     const headers = {};
     const adminToken = localStorage.getItem('aitarget_admin_token');
@@ -15,7 +45,7 @@ class ApiService {
   }
 
   async request(endpoint, options = {}) {
-    const url = `${BASE_URL}${endpoint}`;
+    let url = `${BASE_URL}${endpoint}`;
     const headers = {
       ...this.getAuthHeaders(),
       ...(options.headers || {})
@@ -25,17 +55,46 @@ class ApiService {
       headers['Content-Type'] = 'application/json';
     }
 
+    let response;
     try {
-      const response = await fetch(url, { ...options, headers });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || `HTTP ${response.status}: Request failed`);
+      response = await fetch(url, { ...options, headers });
+    } catch (netErr) {
+      // If fetching via relative /api failed (e.g. Live Server without proxy), retry direct to backend
+      if (!url.startsWith('http://127.0.0.1:5000') && !url.startsWith('http://localhost:5000')) {
+        const fallbackUrl = `http://127.0.0.1:5000/api${endpoint}`;
+        console.warn(`[API] Connection to ${url} failed. Retrying direct to backend ${fallbackUrl}`);
+        BASE_URL = 'http://127.0.0.1:5000/api';
+        response = await fetch(fallbackUrl, { ...options, headers });
+      } else {
+        throw netErr;
       }
-      return data;
-    } catch (err) {
-      console.error(`API Error on [${endpoint}]:`, err.message);
-      throw err;
     }
+
+    // If server returned 404 HTML (e.g. static live server serving 404 HTML page for /api)
+    const contentType = response.headers.get('content-type') || '';
+    if (!response.ok && (!contentType.includes('application/json') || response.status === 404)) {
+      if (!url.startsWith('http://127.0.0.1:5000') && !url.startsWith('http://localhost:5000')) {
+        const fallbackUrl = `http://127.0.0.1:5000/api${endpoint}`;
+        console.warn(`[API] Received non-JSON or 404 from ${url}. Retrying direct to backend ${fallbackUrl}`);
+        BASE_URL = 'http://127.0.0.1:5000/api';
+        response = await fetch(fallbackUrl, { ...options, headers });
+      }
+    }
+
+    let data;
+    try {
+      data = await response.json();
+    } catch (parseErr) {
+      if (!response.ok) {
+        throw new Error(`Server returned HTTP ${response.status}. Please ensure backend is running at http://127.0.0.1:5000`);
+      }
+      throw parseErr;
+    }
+
+    if (!response.ok) {
+      throw new Error(data.error || `HTTP ${response.status}: Request failed`);
+    }
+    return data;
   }
 
   // --- EVENT PASSWORD GATE ---
@@ -71,6 +130,12 @@ class ApiService {
     return this.request('/register', {
       method: 'POST',
       body: isFormData ? payload : JSON.stringify(payload)
+    });
+  }
+
+  async createAutoUser() {
+    return this.request('/auto-user/create', {
+      method: 'POST'
     });
   }
 
@@ -237,6 +302,10 @@ class ApiService {
   getExportCsvUrl() {
     const token = localStorage.getItem('aitarget_admin_token');
     return `${BASE_URL}/admin/export/csv?token=${token}`;
+  }
+
+  getStreamUrl() {
+    return `${BASE_URL}/events/stream`;
   }
 }
 

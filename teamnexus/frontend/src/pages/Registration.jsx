@@ -1,11 +1,14 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Users, Crosshair, Zap, CheckCircle2, AlertTriangle, ArrowRight, Printer, Shield, KeyRound, Building2 } from 'lucide-react';
+import { Users, Crosshair, Zap, CheckCircle2, AlertTriangle, ArrowRight, Printer, Shield, KeyRound, Building2, Camera, ArrowLeft } from 'lucide-react';
 import { api } from '../services/api';
 import CameraIdCapture from '../components/CameraIdCapture';
 
 export default function Registration() {
   const navigate = useNavigate();
+
+  // Workflow Steps: 'SCAN_ID' (Step 1: Mandatory ID Card Scan) -> 'DETAILS' (Step 2: Team details form)
+  const [currentStep, setCurrentStep] = useState('SCAN_ID');
 
   const [formData, setFormData] = useState({
     team_name: '',
@@ -46,11 +49,26 @@ export default function Registration() {
     setError(null);
   };
 
+  // STEP 1 VALIDATION -> Advance to Step 2
+  const handleProceedToDetails = () => {
+    setError(null);
+    if (!p1Image) {
+      setError('Player 1 (Aim Controller) College ID card is mandatory. Please scan with camera or upload image.');
+      return;
+    }
+    if (!p2Image) {
+      setError('Player 2 (Shoot Controller) College ID card is mandatory. Please scan with camera or upload image.');
+      return;
+    }
+    setCurrentStep('DETAILS');
+  };
+
+  // STEP 2 SUBMISSION -> Backend Registration
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError(null);
 
-    // 1. Mandatory Field Validations
+    // 1. Mandatory Field Validations (Roll numbers are optional)
     if (!formData.team_name.trim()) {
       setError('Please provide an official Team Name.');
       return;
@@ -61,13 +79,13 @@ export default function Registration() {
       return;
     }
 
-    if (!formData.p1_name || !formData.p1_phone || !formData.p1_roll) {
-      setError('All fields for Player 1 (Aim Controller) are mandatory.');
+    if (!formData.p1_name.trim() || !formData.p1_phone.trim()) {
+      setError('Player 1 (Aim) Name and Mobile Phone are required.');
       return;
     }
 
-    if (!formData.p2_name || !formData.p2_phone || !formData.p2_roll) {
-      setError('All fields for Player 2 (Shoot Controller) are mandatory.');
+    if (!formData.p2_name.trim() || !formData.p2_phone.trim()) {
+      setError('Player 2 (Shoot) Name and Mobile Phone are required.');
       return;
     }
 
@@ -80,13 +98,9 @@ export default function Registration() {
     }
 
     // 3. Mandatory ID Card Upload Check
-    if (!p1Image) {
-      setError('Player 1 College ID card (camera photo or image upload) is strictly mandatory.');
-      return;
-    }
-
-    if (!p2Image) {
-      setError('Player 2 College ID card (camera photo or image upload) is strictly mandatory.');
+    if (!p1Image || !p2Image) {
+      setError('Both College ID card images are strictly required.');
+      setCurrentStep('SCAN_ID');
       return;
     }
 
@@ -173,7 +187,7 @@ export default function Registration() {
                 {successData.access_code}
               </div>
               <div className="text-[11px] text-amber-200/90 text-center">
-                ⚠️ This secret code will only be shown once. You will need it to unlock your 7-minute game session at the game station!
+                ⚠️ Save this access code. Enter it at the Game Station to unlock your 7-minute match session!
               </div>
             </div>
           </div>
@@ -184,9 +198,9 @@ export default function Registration() {
               <span>Next Steps:</span>
             </div>
             <div>• Proceed to the competition waiting area and watch the <span className="text-cyan-400 font-medium">Live Queue Display</span>.</div>
-            <div>• When <span className="text-cyan-400 font-mono font-semibold">{successData.team_code}</span> is called, report to the game station within 30 seconds.</div>
+            <div>• When <span className="text-cyan-400 font-mono font-semibold">{successData.team_code}</span> is called, report to the game station.</div>
             <div>• Enter your Team ID and Game Access Code at the station to start your official 7-minute match.</div>
-            <div>• Player 1 controls WASD (aim) while Player 2 controls SPACE (fire).</div>
+            <div>• Player 1 controls WASD (aim) while Player 2 controls Mouse Left Click or ESP32 Trigger (shoot).</div>
           </div>
 
           <div className="flex flex-col sm:flex-row gap-3">
@@ -198,15 +212,16 @@ export default function Registration() {
               <span>Print / Save Pass</span>
             </button>
             <button
-              onClick={() => navigate('/queue')}
+              onClick={() => navigate('/game')}
               className="flex-1 py-3 px-4 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 font-semibold text-xs shadow-lg shadow-cyan-500/25 transition flex items-center justify-center gap-2"
             >
-              <span>View Live Queue</span>
+              <span>Go to Game Station</span>
               <ArrowRight className="w-4 h-4" />
             </button>
             <button
               onClick={() => {
                 setSuccessData(null);
+                setCurrentStep('SCAN_ID');
                 setFormData({
                   team_name: '', college_name: '',
                   p1_name: '', p1_college: '', p1_phone: '', p1_roll: '',
@@ -227,13 +242,12 @@ export default function Registration() {
     );
   }
 
-  // --- REGISTRATION FORM ---
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 py-10 px-4 sm:px-6 lg:px-8">
       <div className="max-w-4xl mx-auto">
 
         {/* Header Banner */}
-        <div className="text-center mb-8">
+        <div className="text-center mb-6">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 text-xs font-mono uppercase tracking-widest mb-3">
             <Users className="w-3.5 h-3.5" />
             <span>2-Player Competitive Event Registration</span>
@@ -241,43 +255,190 @@ export default function Registration() {
           <h1 className="text-3xl sm:text-4xl font-black font-display tracking-tight text-white mb-2">
             AI TARGET STRIKE REGISTRATION
           </h1>
-          <p className="text-slate-400 text-sm max-w-xl mx-auto">
-            Form your 2-player team. Capture both college ID cards, obtain your secure game access code, and enter the competition queue.
+          <p className="text-slate-400 text-xs sm:text-sm max-w-xl mx-auto">
+            Mandatory Camera-First ID Card Scanning. Capture both college ID cards before entering team details.
           </p>
         </div>
 
+        {/* STEP PROGRESS BAR */}
+        <div className="mb-8 flex items-center justify-center gap-3">
+          <div className={`flex items-center gap-2 px-4 py-2 rounded-xl border text-xs font-mono font-bold transition-all ${
+            currentStep === 'SCAN_ID'
+              ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300 shadow-lg shadow-cyan-500/20'
+              : 'bg-slate-900 border-emerald-500/50 text-emerald-400'
+          }`}>
+            <Camera className="w-4 h-4" />
+            <span>STEP 1: SCAN ID CARDS</span>
+            {p1Image && p2Image && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 ml-1" />}
+          </div>
+
+          <div className="w-8 h-0.5 bg-slate-800"></div>
+
+          <div className={`flex items-center gap-2 px-4 py-2 rounded-xl border text-xs font-mono font-bold transition-all ${
+            currentStep === 'DETAILS'
+              ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300 shadow-lg shadow-cyan-500/20'
+              : 'bg-slate-900 border-slate-800 text-slate-500'
+          }`}>
+            <Users className="w-4 h-4" />
+            <span>STEP 2: TEAM DETAILS</span>
+          </div>
+        </div>
+
         {error && (
-          <div className="mb-6 p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-sm flex items-center gap-3">
+          <div className="mb-6 p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-sm flex items-center gap-3 shadow-lg">
             <AlertTriangle className="w-5 h-5 flex-shrink-0" />
             <span>{error}</span>
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-6">
-
-          {/* Team & College Info Section */}
-          <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* ==================================================================== */}
+        {/* STEP 1: MANDATORY ID CARD CAMERA & SCAN SCREEN (COMES FIRST) */}
+        {/* ==================================================================== */}
+        {currentStep === 'SCAN_ID' && (
+          <div className="space-y-6">
+            {/* Step 1 Introduction Box */}
+            <div className="p-4 rounded-2xl bg-cyan-950/30 border border-cyan-500/30 text-xs text-slate-300 flex items-start gap-3">
+              <Shield className="w-5 h-5 text-cyan-400 flex-shrink-0 mt-0.5" />
               <div>
-                <label className="block text-xs font-mono uppercase tracking-wider text-slate-400 mb-2">
-                  Team Name <span className="text-rose-400">*</span>
-                </label>
-                <input
-                  type="text"
-                  name="team_name"
-                  value={formData.team_name}
-                  onChange={handleInputChange}
-                  placeholder="e.g. CYBER TITANS, NEURAL OVERLORDS"
-                  required
-                  className="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition text-sm"
+                <strong className="text-white block font-mono text-xs uppercase tracking-wider mb-0.5">
+                  ID CARD VERIFICATION REQUIRED FIRST
+                </strong>
+                College ID cards are mandatory for all tournament participants. Use your device camera to scan both cards or upload digital copies. Once both IDs are attached, you can proceed to enter your team credentials.
+              </div>
+            </div>
+
+            {/* 2 Player Camera Scanners */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Player 1 Scanner */}
+              <div className="bg-slate-900 border border-cyan-500/30 rounded-2xl p-6 shadow-xl relative overflow-hidden">
+                <div className="flex items-center justify-between mb-4 border-b border-slate-800 pb-3">
+                  <div className="flex items-center gap-2 text-cyan-400">
+                    <Crosshair className="w-4 h-4" />
+                    <span className="font-mono text-xs font-bold uppercase tracking-wider">
+                      PLAYER 1: AIM OPERATIVE
+                    </span>
+                  </div>
+                  {p1Image && (
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 text-[10px] font-mono">
+                      ✓ ID Attached
+                    </span>
+                  )}
+                </div>
+
+                <CameraIdCapture
+                  label="Player 1 College ID Card"
+                  participantName="Player 1 (Aim)"
+                  currentPreview={p1Image}
+                  onImageSelected={handleP1ImageSelected}
+                  accentColor="cyan"
+                  required={true}
                 />
               </div>
 
-              <div>
-                <label className="block text-xs font-mono uppercase tracking-wider text-slate-400 mb-2">
-                  College / Institution Name <span className="text-rose-400">*</span>
-                </label>
-                <div className="relative">
+              {/* Player 2 Scanner */}
+              <div className="bg-slate-900 border border-indigo-500/30 rounded-2xl p-6 shadow-xl relative overflow-hidden">
+                <div className="flex items-center justify-between mb-4 border-b border-slate-800 pb-3">
+                  <div className="flex items-center gap-2 text-indigo-400">
+                    <Zap className="w-4 h-4" />
+                    <span className="font-mono text-xs font-bold uppercase tracking-wider">
+                      PLAYER 2: SHOOT OPERATIVE
+                    </span>
+                  </div>
+                  {p2Image && (
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 text-[10px] font-mono">
+                      ✓ ID Attached
+                    </span>
+                  )}
+                </div>
+
+                <CameraIdCapture
+                  label="Player 2 College ID Card"
+                  participantName="Player 2 (Shoot)"
+                  currentPreview={p2Image}
+                  onImageSelected={handleP2ImageSelected}
+                  accentColor="indigo"
+                  required={true}
+                />
+              </div>
+            </div>
+
+            {/* Proceed to Step 2 Button */}
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={handleProceedToDetails}
+                className={`w-full py-4 px-6 rounded-2xl font-bold font-mono text-sm tracking-wider flex items-center justify-center gap-2 transition-all shadow-xl ${
+                  p1Image && p2Image
+                    ? 'bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-white shadow-cyan-500/25 cursor-pointer'
+                    : 'bg-slate-800 text-slate-400 border border-slate-700 cursor-not-allowed opacity-80'
+                }`}
+              >
+                <span>CONTINUE TO PARTICIPANT DETAILS (STEP 2)</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+              {(!p1Image || !p2Image) && (
+                <div className="text-center text-[11px] text-slate-400 mt-2 font-mono">
+                  * Scan or upload both ID cards above to unlock Step 2.
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ==================================================================== */}
+        {/* STEP 2: PARTICIPANT & TEAM DETAILS FORM */}
+        {/* ==================================================================== */}
+        {currentStep === 'DETAILS' && (
+          <form onSubmit={handleSubmit} className="space-y-6">
+
+            {/* Top Bar: Attached ID Status Summary with Return option */}
+            <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 flex flex-wrap items-center justify-between gap-3 shadow-lg">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                  <CheckCircle2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="text-xs font-mono font-bold text-white flex items-center gap-2">
+                    <span>2 COLLEGE ID CARDS VERIFIED & ATTACHED</span>
+                  </div>
+                  <div className="text-[11px] text-slate-400">
+                    Both participant ID cards are secured and ready for registration.
+                  </div>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setCurrentStep('SCAN_ID')}
+                className="px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-mono text-cyan-300 flex items-center gap-1.5 transition"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                <span>Change / Rescan IDs</span>
+              </button>
+            </div>
+
+            {/* Team & College Info Section */}
+            <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 space-y-4 shadow-xl">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-mono uppercase tracking-wider text-slate-300 mb-2 font-bold">
+                    Team Name <span className="text-rose-400">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    name="team_name"
+                    value={formData.team_name}
+                    onChange={handleInputChange}
+                    placeholder="e.g. CYBER TITANS, NEURAL OVERLORDS"
+                    required
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition text-sm"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-mono uppercase tracking-wider text-slate-300 mb-2 font-bold">
+                    College / Institution Name <span className="text-rose-400">*</span>
+                  </label>
                   <input
                     type="text"
                     name="college_name"
@@ -285,168 +446,160 @@ export default function Registration() {
                     onChange={handleInputChange}
                     placeholder="e.g. Sree Sakthi Engineering College"
                     required
-                    className="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition text-sm"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition text-sm"
                   />
                 </div>
               </div>
             </div>
-          </div>
 
-          {/* 2 Players Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* 2 Players Input Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
 
-            {/* PLAYER 1: AIM CONTROL (WASD) */}
-            <div className="bg-slate-900/80 border border-cyan-500/30 rounded-2xl p-6 relative overflow-hidden shadow-lg shadow-cyan-950/20">
-              <div className="flex items-center gap-2 mb-4 text-cyan-400 border-b border-slate-800 pb-3">
-                <Crosshair className="w-5 h-5" />
-                <h3 className="font-extrabold text-sm uppercase tracking-wider font-mono">
-                  PLAYER 1: AIM CONTROL (WASD)
-                </h3>
+              {/* PLAYER 1: AIM CONTROL (WASD) */}
+              <div className="bg-slate-900 border border-cyan-500/30 rounded-2xl p-6 relative overflow-hidden shadow-xl">
+                <div className="flex items-center gap-2 mb-4 text-cyan-400 border-b border-slate-800 pb-3">
+                  <Crosshair className="w-4 h-4" />
+                  <span className="font-mono text-xs font-bold uppercase tracking-wider">
+                    PLAYER 1: AIM CONTROL (WASD)
+                  </span>
+                </div>
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-mono uppercase tracking-wider text-slate-400 mb-1.5">
+                      Full Name <span className="text-rose-400">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      name="p1_name"
+                      value={formData.p1_name}
+                      onChange={handleInputChange}
+                      placeholder="e.g. Alex Morgan"
+                      required
+                      className="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500 text-sm"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-mono uppercase tracking-wider text-slate-400 mb-1.5">
+                      Mobile Number <span className="text-rose-400">*</span>
+                    </label>
+                    <input
+                      type="tel"
+                      name="p1_phone"
+                      value={formData.p1_phone}
+                      onChange={handleInputChange}
+                      placeholder="10-digit mobile number"
+                      maxLength={10}
+                      required
+                      className="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500 text-sm font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-mono uppercase tracking-wider text-slate-400 mb-1.5">
+                      College Roll No. <span className="text-slate-500 text-[11px]">(Optional)</span>
+                    </label>
+                    <input
+                      type="text"
+                      name="p1_roll"
+                      value={formData.p1_roll}
+                      onChange={handleInputChange}
+                      placeholder="e.g. 714021104001 (Optional)"
+                      className="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-white placeholder-slate-600 focus:outline-none focus:border-cyan-500 text-sm font-mono"
+                    />
+                  </div>
+                </div>
               </div>
 
-              <div className="space-y-3.5 text-sm">
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">Full Name *</label>
-                  <input
-                    type="text"
-                    name="p1_name"
-                    value={formData.p1_name}
-                    onChange={handleInputChange}
-                    placeholder="Enter full name"
-                    required
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-cyan-500"
-                  />
+              {/* PLAYER 2: SHOOT CONTROL (MOUSE / ESP32) */}
+              <div className="bg-slate-900 border border-indigo-500/30 rounded-2xl p-6 relative overflow-hidden shadow-xl">
+                <div className="flex items-center gap-2 mb-4 text-indigo-400 border-b border-slate-800 pb-3">
+                  <Zap className="w-4 h-4" />
+                  <span className="font-mono text-xs font-bold uppercase tracking-wider">
+                    PLAYER 2: SHOOT CONTROL (MOUSE / ESP32)
+                  </span>
                 </div>
 
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">Student Roll / Register No *</label>
-                  <input
-                    type="text"
-                    name="p1_roll"
-                    value={formData.p1_roll}
-                    onChange={handleInputChange}
-                    placeholder="e.g. 21CS045"
-                    required
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-cyan-500 font-mono"
-                  />
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-mono uppercase tracking-wider text-slate-400 mb-1.5">
+                      Full Name <span className="text-rose-400">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      name="p2_name"
+                      value={formData.p2_name}
+                      onChange={handleInputChange}
+                      placeholder="e.g. Jordan Lee"
+                      required
+                      className="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500 text-sm"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-mono uppercase tracking-wider text-slate-400 mb-1.5">
+                      Mobile Number <span className="text-rose-400">*</span>
+                    </label>
+                    <input
+                      type="tel"
+                      name="p2_phone"
+                      value={formData.p2_phone}
+                      onChange={handleInputChange}
+                      placeholder="10-digit mobile number"
+                      maxLength={10}
+                      required
+                      className="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500 text-sm font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-mono uppercase tracking-wider text-slate-400 mb-1.5">
+                      College Roll No. <span className="text-slate-500 text-[11px]">(Optional)</span>
+                    </label>
+                    <input
+                      type="text"
+                      name="p2_roll"
+                      value={formData.p2_roll}
+                      onChange={handleInputChange}
+                      placeholder="e.g. 714021104002 (Optional)"
+                      className="w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500 text-sm font-mono"
+                    />
+                  </div>
                 </div>
-
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">Mobile Phone (10 Digits) *</label>
-                  <input
-                    type="tel"
-                    name="p1_phone"
-                    value={formData.p1_phone}
-                    onChange={handleInputChange}
-                    placeholder="e.g. 9876543210"
-                    required
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-cyan-500 font-mono"
-                  />
-                </div>
-
-                {/* Camera / ID Card Upload for P1 */}
-                <CameraIdCapture
-                  label="Player 1 College ID Card"
-                  roleTitle="Player 1 (Aim)"
-                  currentPreview={p1Image}
-                  onImageSelected={handleP1ImageSelected}
-                  accentColor="cyan"
-                />
-              </div>
-            </div>
-
-            {/* PLAYER 2: SHOOT CONTROL (SPACE) */}
-            <div className="bg-slate-900/80 border border-indigo-500/30 rounded-2xl p-6 relative overflow-hidden shadow-lg shadow-indigo-950/20">
-              <div className="flex items-center gap-2 mb-4 text-indigo-400 border-b border-slate-800 pb-3">
-                <Zap className="w-5 h-5" />
-                <h3 className="font-extrabold text-sm uppercase tracking-wider font-mono">
-                  PLAYER 2: SHOOT CONTROL (SPACE)
-                </h3>
               </div>
 
-              <div className="space-y-3.5 text-sm">
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">Full Name *</label>
-                  <input
-                    type="text"
-                    name="p2_name"
-                    value={formData.p2_name}
-                    onChange={handleInputChange}
-                    placeholder="Enter full name"
-                    required
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">Student Roll / Register No *</label>
-                  <input
-                    type="text"
-                    name="p2_roll"
-                    value={formData.p2_roll}
-                    onChange={handleInputChange}
-                    placeholder="e.g. 21CS088"
-                    required
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500 font-mono"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">Mobile Phone (10 Digits) *</label>
-                  <input
-                    type="tel"
-                    name="p2_phone"
-                    value={formData.p2_phone}
-                    onChange={handleInputChange}
-                    placeholder="e.g. 9876543211"
-                    required
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500 font-mono"
-                  />
-                </div>
-
-                {/* Camera / ID Card Upload for P2 */}
-                <CameraIdCapture
-                  label="Player 2 College ID Card"
-                  roleTitle="Player 2 (Shoot)"
-                  currentPreview={p2Image}
-                  onImageSelected={handleP2ImageSelected}
-                  accentColor="indigo"
-                />
-              </div>
             </div>
 
-          </div>
+            {/* Submission Actions */}
+            <div className="pt-2 flex flex-col sm:flex-row gap-3">
+              <button
+                type="button"
+                onClick={() => setCurrentStep('SCAN_ID')}
+                className="py-4 px-6 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-mono text-xs font-bold transition flex items-center justify-center gap-2"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                <span>Back to ID Cards</span>
+              </button>
 
-          {/* Privacy & Retention Notice (Section 4 Requirement) */}
-          <div className="bg-slate-900/60 border border-slate-800/80 rounded-xl p-4 text-xs text-slate-400 space-y-1">
-            <div className="font-semibold text-slate-300 flex items-center gap-1.5">
-              <Shield className="w-4 h-4 text-emerald-400" />
-              <span>Data Privacy & ID Card Retention Policy</span>
+              <button
+                type="submit"
+                disabled={loading}
+                className="flex-1 py-4 px-8 rounded-2xl bg-gradient-to-r from-cyan-500 via-sky-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-white font-black text-sm tracking-wider font-mono shadow-xl shadow-cyan-500/25 transition flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {loading ? (
+                  <span>REGISTERING TEAM & ENCRYPTING ID CARDS...</span>
+                ) : (
+                  <>
+                    <span>SUBMIT REGISTRATION & GET GAME ACCESS CODE</span>
+                    <ArrowRight className="w-5 h-5" />
+                  </>
+                )}
+              </button>
             </div>
-            <div>
-              • Uploaded or captured college ID cards and phone numbers are encrypted in a private server vault accessible strictly to authorized event administrators.
-            </div>
-            <div>
-              • Identity documents will NEVER appear on public leaderboards or projector displays and can be purged permanently after the event concludes.
-            </div>
-          </div>
 
-          {/* Submit Button */}
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-4 rounded-xl bg-gradient-to-r from-cyan-500 via-sky-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-white font-extrabold text-base tracking-wide shadow-xl shadow-cyan-500/25 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-          >
-            {loading ? (
-              <span className="inline-flex items-center gap-2">
-                <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
-                <span>VERIFYING ID CARDS & REGISTERING TEAM...</span>
-              </span>
-            ) : (
-              <span>CONFIRM 2-PLAYER TEAM & GENERATE ACCESS CODE</span>
-            )}
-          </button>
-        </form>
+          </form>
+        )}
 
       </div>
     </div>

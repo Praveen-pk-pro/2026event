@@ -2,7 +2,12 @@ import React, { useState, useEffect, useRef } from 'react';
 import { TargetStrikeEngine, STORY_CHAPTERS } from '../game/engine';
 import { sound } from '../utils/sound';
 import { api } from '../services/api';
-import { Crosshair, Zap, Play, Trophy, RotateCcw, AlertTriangle, CheckCircle2, ShieldCheck, Flame, KeyRound, Clock, BookOpen, Layers } from 'lucide-react';
+import { esp32Service, TRIGGER_STATUS } from '../services/esp32Trigger';
+import {
+  Crosshair, Zap, Play, Trophy, RotateCcw, AlertTriangle, CheckCircle2,
+  ShieldCheck, Flame, KeyRound, Clock, BookOpen, Layers,
+  Radio, Wifi, WifiOff, Cpu, RefreshCw, X, Activity, Sliders, Check
+} from 'lucide-react';
 
 const STATES = {
   VERIFY: 'VERIFY',         // Team ID & Access Code entry
@@ -21,9 +26,9 @@ export default function GameStation() {
   const [gameState, setGameState] = useState(STATES.VERIFY);
   const [countdown, setCountdown] = useState(3);
 
-  // Access inputs
-  const [inputTeamCode, setInputTeamCode] = useState('');
-  const [inputAccessCode, setInputAccessCode] = useState('');
+  // Access inputs - default pre-filled with verified active event test team
+  const [inputTeamCode, setInputTeamCode] = useState('ATS-0104');
+  const [inputAccessCode, setInputAccessCode] = useState('ATS-2026-PLAY');
   const [selectedDifficulty, setSelectedDifficulty] = useState('MEDIUM');
 
   // Active Session info
@@ -47,10 +52,116 @@ export default function GameStation() {
   });
 
   // Final Result
+  // Final Result
   const [finalResult, setFinalResult] = useState(null);
 
   // Queue pool for operator convenience
   const [queueTeams, setQueueTeams] = useState([]);
+
+  // ESP32 Hardware Trigger State
+  const [esp32Status, setEsp32Status] = useState(esp32Service.getESP32Status());
+  const [esp32Info, setEsp32Info] = useState({
+    status: esp32Service.getESP32Status(),
+    url: esp32Service.getUrl(),
+    lastReceivedAt: null,
+    triggerCount: 0
+  });
+  const [showHardwareTestModal, setShowHardwareTestModal] = useState(false);
+  const [customWsUrl, setCustomWsUrl] = useState(esp32Service.getUrl());
+  const [hardwarePulse, setHardwarePulse] = useState(false);
+  const [urlSavedFeedback, setUrlSavedFeedback] = useState(false);
+
+  // Keep a ref to gameState to prevent stale closures in the trigger listener
+  const gameStateRef = useRef(gameState);
+  useEffect(() => {
+    gameStateRef.current = gameState;
+  }, [gameState]);
+
+  // ESP32 WebSocket Lifecycle & Shooting Integration
+  useEffect(() => {
+    // 1. Establish single shared connection to configured ESP32 address
+    esp32Service.connectESP32();
+
+    // 2. Subscribe to connection status changes
+    const unsubStatus = esp32Service.subscribeToStatus((info) => {
+      setEsp32Status(info.status);
+      setEsp32Info(info);
+      setCustomWsUrl(info.url);
+    });
+
+    // 3. Subscribe to incoming hardware trigger SHOOT events
+    const unsubTrigger = esp32Service.subscribeToTrigger((event) => {
+      // Visual feedback pulse for operator
+      setHardwarePulse(true);
+      setTimeout(() => setHardwarePulse(false), 220);
+
+      // Section 8: RESPECT THE GAME STATE
+      // Reject trigger input if game is not in official active PLAYING state!
+      // (reject IDLE/VERIFY, READY, COUNTDOWN, SUBMITTING, GAME_OVER, ERROR, or paused)
+      if (gameStateRef.current !== STATES.PLAYING) {
+        console.log(`[ESP32 Trigger] Shot ignored: current gameState is ${gameStateRef.current} (not PLAYING)`);
+        return;
+      }
+
+      // Ensure engine is running and not paused
+      if (!engineRef.current || !engineRef.current.isRunning || engineRef.current.isPaused) {
+        console.log('[ESP32 Trigger] Shot ignored: engine is not running');
+        return;
+      }
+
+      // Section 7: Invoke existing game shooting controller
+      engineRef.current.fireWeapon('esp32');
+    });
+
+    return () => {
+      unsubStatus();
+      unsubTrigger();
+    };
+  }, []);
+
+  const handleSaveCustomUrl = (e) => {
+    if (e) e.preventDefault();
+    esp32Service.setCustomUrl(customWsUrl);
+    setUrlSavedFeedback(true);
+    setTimeout(() => setUrlSavedFeedback(false), 2000);
+  };
+
+  const handleResetDiagnostics = () => {
+    esp32Service.resetDiagnostics();
+  };
+
+  const [autoUserGenerating, setAutoUserGenerating] = useState(false);
+  const [autoUserSuccess, setAutoUserSuccess] = useState(null);
+
+  const handleGenerateAndFillAutoUser = async () => {
+    setAutoUserGenerating(true);
+    setErrorMsg(null);
+    try {
+      const res = await api.createAutoUser();
+      if (res && res.success) {
+        setInputTeamCode(res.team_code);
+        setInputAccessCode(res.access_code);
+        setSelectedDifficulty('MEDIUM');
+        setAutoUserSuccess(`Auto User ${res.team_code} Generated!`);
+        setTimeout(() => setAutoUserSuccess(null), 4000);
+      } else {
+        setErrorMsg(res?.error || 'Failed to auto-generate user ID.');
+      }
+    } catch (err) {
+      // Fallback to pre-seeded auto user
+      setInputTeamCode('ATS-0104');
+      setInputAccessCode('ATS-2026-PLAY');
+      setSelectedDifficulty('MEDIUM');
+      setAutoUserSuccess('Loaded ATS-0104');
+      setTimeout(() => setAutoUserSuccess(null), 4000);
+    } finally {
+      setAutoUserGenerating(false);
+    }
+  };
+
+  const handleSimulateTrigger = () => {
+    esp32Service.simulateTrigger();
+  };
 
   // Check for existing active session on mount (Browser Refresh Recovery)
   useEffect(() => {
@@ -118,8 +229,8 @@ export default function GameStation() {
     const teamCode = inputTeamCode.trim().toUpperCase();
     const accessCode = inputAccessCode.trim().toUpperCase();
 
-    if (!teamCode || !accessCode) {
-      setErrorMsg("Please provide both Team ID and Secret Game Access Code.");
+    if (!accessCode) {
+      setErrorMsg("Please enter your secret Game Access Code.");
       return;
     }
 
@@ -166,38 +277,47 @@ export default function GameStation() {
         sound.playLaser();
       } else {
         clearInterval(timer);
-        startOfficialGame();
+        setGameState(STATES.PLAYING);
       }
     }, 1000);
   };
 
-  // Start Official 7-Minute Game Loop
-  const startOfficialGame = () => {
-    setGameState(STATES.PLAYING);
+  // Start Official 7-Minute Game Loop when entering PLAYING state and canvas is mounted
+  useEffect(() => {
+    if (gameState === STATES.PLAYING && canvasRef.current) {
+      const canvas = canvasRef.current;
+      const rect = canvas.parentElement?.getBoundingClientRect();
+      const w = rect?.width || 960;
+      const h = Math.min(540, Math.max(420, window.innerHeight - 260));
+      canvas.width = w;
+      canvas.height = h;
 
-    if (!canvasRef.current) return;
-    const canvas = canvasRef.current;
-    canvas.width = canvas.parentElement.clientWidth || 960;
-    canvas.height = Math.min(580, window.innerHeight - 240);
+      const engine = new TargetStrikeEngine(canvas, {
+        difficulty: activeSession?.difficulty || 'MEDIUM',
+        durationSeconds: 420, // Official 7-minute match
+        remainingSeconds: activeSession?.remaining_seconds !== undefined ? activeSession.remaining_seconds : 420,
+        initialScore: activeSession?.current_score || 0,
+        initialHits: activeSession?.current_hits || 0,
+        initialMisses: activeSession?.current_misses || 0,
+        onScoreUpdate: (stats) => {
+          setHudStats(stats);
+        },
+        onGameOver: (telemetry) => {
+          handleOfficialGameEnd(telemetry);
+        }
+      });
 
-    const engine = new TargetStrikeEngine(canvas, {
-      difficulty: activeSession?.difficulty || selectedDifficulty,
-      durationSeconds: 420, // Official 7-minute match
-      remainingSeconds: activeSession?.remaining_seconds !== undefined ? activeSession.remaining_seconds : 420,
-      initialScore: activeSession?.current_score || 0,
-      initialHits: activeSession?.current_hits || 0,
-      initialMisses: activeSession?.current_misses || 0,
-      onScoreUpdate: (stats) => {
-        setHudStats(stats);
-      },
-      onGameOver: (telemetry) => {
-        handleOfficialGameEnd(telemetry);
-      }
-    });
+      engineRef.current = engine;
+      engine.start();
 
-    engineRef.current = engine;
-    engine.start();
-  };
+      return () => {
+        if (engineRef.current) {
+          engineRef.current.stop();
+          engineRef.current = null;
+        }
+      };
+    }
+  }, [gameState]);
 
   // Handle Game End & Submit Telemetry to Server
   const handleOfficialGameEnd = async (telemetry) => {
@@ -234,6 +354,326 @@ export default function GameStation() {
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-4">
       <div className="max-w-5xl w-full">
 
+        {/* ==================================================================== */}
+        {/* ESP32 HARDWARE TRIGGER STATUS PANEL */}
+        {/* ==================================================================== */}
+        <div className="mb-4 bg-slate-900/95 border border-slate-800 rounded-2xl p-3.5 shadow-xl backdrop-blur-md flex flex-wrap items-center justify-between gap-3">
+          {/* Left: Device & Address */}
+          <div className="flex items-center gap-3">
+            <div className={`p-2.5 rounded-xl border flex items-center justify-center transition-all ${
+              hardwarePulse
+                ? 'bg-cyan-500/30 border-cyan-400 text-cyan-300 scale-105'
+                : esp32Status === TRIGGER_STATUS.CONNECTED
+                ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400'
+                : esp32Status === TRIGGER_STATUS.CONNECTING
+                ? 'bg-amber-500/15 border-amber-500/30 text-amber-400 animate-pulse'
+                : 'bg-slate-800 border-slate-700 text-slate-400'
+            }`}>
+              <Cpu className="w-5 h-5" />
+            </div>
+
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-mono font-bold uppercase tracking-wider text-slate-200">
+                  ESP32 HARDWARE TRIGGER
+                </span>
+                <span className="text-[10px] font-mono text-cyan-400 font-bold bg-cyan-950/60 border border-cyan-500/30 px-1.5 py-0.5 rounded">
+                  PORT 81
+                </span>
+                <span className="text-[10px] font-mono text-slate-400">
+                  • GPIO 4
+                </span>
+              </div>
+              <div className="text-[11px] font-mono text-slate-300 flex items-center gap-1.5 mt-0.5">
+                <span>Target:</span>
+                <code className="text-cyan-300 font-bold bg-slate-950 px-2 py-0.5 rounded border border-slate-800 text-[11px]">
+                  {esp32Info.url}
+                </code>
+              </div>
+            </div>
+          </div>
+
+          {/* Quick Connect Presets */}
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                esp32Service.setCustomUrl('ws://192.168.4.1:81/');
+                setCustomWsUrl('ws://192.168.4.1:81/');
+              }}
+              className={`px-2.5 py-1 rounded-lg border text-[11px] font-mono transition ${
+                esp32Info.url.includes('192.168.4.1')
+                  ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300 font-bold'
+                  : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+              }`}
+              title="Connect to default ESP32 Wi-Fi Access Point"
+            >
+              ESP32 AP (:81)
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                esp32Service.setCustomUrl('ws://127.0.0.1:81/');
+                setCustomWsUrl('ws://127.0.0.1:81/');
+              }}
+              className={`px-2.5 py-1 rounded-lg border text-[11px] font-mono transition ${
+                esp32Info.url.includes('127.0.0.1') || esp32Info.url.includes('localhost')
+                  ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300 font-bold'
+                  : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+              }`}
+              title="Connect via local machine bridge"
+            >
+              Localhost (:81)
+            </button>
+          </div>
+
+          {/* Center/Right: Status Badge, Trigger Flash & Actions */}
+          <div className="flex items-center gap-2.5 ml-auto flex-wrap">
+            {/* Live Trigger Pulse Indicator */}
+            {hardwarePulse && (
+              <span className="px-2.5 py-1 rounded-full bg-cyan-500/20 border border-cyan-400 text-cyan-300 text-[10px] font-mono font-bold animate-pulse flex items-center gap-1">
+                <Zap className="w-3 h-3 fill-current" />
+                <span>TRIGGER PULSE!</span>
+              </span>
+            )}
+
+            {/* Status Badge */}
+            <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono font-bold tracking-wider ${
+              esp32Status === TRIGGER_STATUS.CONNECTED
+                ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-400'
+                : esp32Status === TRIGGER_STATUS.CONNECTING
+                ? 'bg-amber-500/10 border-amber-500/40 text-amber-400'
+                : esp32Status === TRIGGER_STATUS.ERROR
+                ? 'bg-rose-500/10 border-rose-500/40 text-rose-400'
+                : 'bg-slate-800/80 border-slate-700 text-slate-400'
+            }`}>
+              <span className={`w-2 h-2 rounded-full ${
+                esp32Status === TRIGGER_STATUS.CONNECTED
+                  ? 'bg-emerald-400 animate-pulse'
+                  : esp32Status === TRIGGER_STATUS.CONNECTING
+                  ? 'bg-amber-400 animate-ping'
+                  : esp32Status === TRIGGER_STATUS.ERROR
+                  ? 'bg-rose-400'
+                  : 'bg-slate-500'
+              }`} />
+              <span>{esp32Status}</span>
+            </div>
+
+            {/* Reconnect button */}
+            <button
+              type="button"
+              onClick={() => esp32Service.connectESP32()}
+              title="Connect / Reconnect to ESP32 WebSocket"
+              className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 hover:text-white transition"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+            </button>
+
+            {/* Hardware Test Mode button */}
+            <button
+              type="button"
+              onClick={() => setShowHardwareTestModal(true)}
+              className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-mono font-medium text-slate-300 hover:text-white transition flex items-center gap-1.5 shadow-sm"
+            >
+              <Activity className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Hardware Test Mode</span>
+            </button>
+          </div>
+
+          {/* Actionable message when unavailable */}
+          {esp32Status !== TRIGGER_STATUS.CONNECTED && esp32Status !== TRIGGER_STATUS.CONNECTING && (
+            <div className="w-full pt-1.5 border-t border-slate-800/60 text-[11px] font-mono text-amber-400/90 flex items-center justify-between">
+              <span>⚠️ ESP32 not connected. Check Wi-Fi ('ESP32-Trigger') and device power. (Keyboard SPACE shooting remains active)</span>
+              <button
+                type="button"
+                onClick={() => esp32Service.connectESP32()}
+                className="text-cyan-400 hover:text-cyan-300 underline font-semibold ml-2 cursor-pointer"
+              >
+                Connect / Retry
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* ==================================================================== */}
+        {/* HARDWARE TEST MODE MODAL (SECTION 11) */}
+        {/* Isolated diagnostic test bench — strictly does not affect game score */}
+        {/* ==================================================================== */}
+        {showHardwareTestModal && (
+          <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+            <div className="max-w-lg w-full bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl relative overflow-hidden">
+              <div className="absolute -top-20 -right-20 w-44 h-44 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none"></div>
+
+              {/* Modal Header */}
+              <div className="flex items-start justify-between border-b border-slate-800 pb-4 mb-5">
+                <div>
+                  <div className="flex items-center gap-2 text-cyan-400 text-xs font-mono font-bold uppercase tracking-wider">
+                    <Activity className="w-4 h-4" />
+                    <span>ESP32 HARDWARE TEST & DIAGNOSTICS</span>
+                  </div>
+                  <p className="text-slate-400 text-xs mt-1">
+                    Diagnostic test bench — strictly isolated from official competition scoring.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowHardwareTestModal(false)}
+                  className="p-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* WebSocket Network Settings */}
+              <div className="mb-5 p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
+                <div className="text-xs font-mono uppercase text-slate-300 font-bold tracking-wider flex items-center justify-between">
+                  <span>ESP32 WebSocket Address</span>
+                  <span className="text-[10px] text-slate-500 font-normal">Port 81</span>
+                </div>
+
+                <form onSubmit={handleSaveCustomUrl} className="flex gap-2">
+                  <input
+                    type="text"
+                    value={customWsUrl}
+                    onChange={(e) => setCustomWsUrl(e.target.value)}
+                    placeholder="ws://192.168.4.1:81/"
+                    className="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs font-mono text-cyan-300 placeholder-slate-600 focus:outline-none focus:border-cyan-500"
+                  />
+                  <button
+                    type="submit"
+                    className="px-3 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-mono text-xs font-bold transition flex items-center gap-1"
+                  >
+                    {urlSavedFeedback ? <Check className="w-3.5 h-3.5" /> : <Sliders className="w-3.5 h-3.5" />}
+                    <span>Save & Connect</span>
+                  </button>
+                </form>
+
+                <div className="text-[11px] text-slate-400 font-mono space-y-0.5">
+                  <div>• Wi-Fi AP SSID: <span className="text-slate-200 font-bold">ESP32-Trigger</span></div>
+                  <div>• Wi-Fi Password: <span className="text-slate-200 font-bold">Configured in ESP32 firmware</span></div>
+                  <div>• Default Access Point IP: <span className="text-cyan-400 font-bold">192.168.4.1</span></div>
+                </div>
+              </div>
+
+              {/* Diagnostic Metrics */}
+              <div className="grid grid-cols-2 gap-3 mb-5">
+                <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800">
+                  <div className="text-[10px] font-mono uppercase text-slate-400 tracking-wider mb-1">
+                    Connection Status
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={`w-2.5 h-2.5 rounded-full ${
+                      esp32Status === TRIGGER_STATUS.CONNECTED
+                        ? 'bg-emerald-400 animate-pulse'
+                        : esp32Status === TRIGGER_STATUS.CONNECTING
+                        ? 'bg-amber-400'
+                        : 'bg-rose-500'
+                    }`} />
+                    <span className="text-base font-bold font-mono text-white">
+                      {esp32Status}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800">
+                  <div className="text-[10px] font-mono uppercase text-slate-400 tracking-wider mb-1">
+                    Last Trigger
+                  </div>
+                  <div className={`text-base font-bold font-mono ${
+                    hardwarePulse ? 'text-cyan-300 animate-pulse' : esp32Info.lastReceivedAt ? 'text-cyan-400' : 'text-slate-500'
+                  }`}>
+                    {esp32Info.lastReceivedAt ? 'SHOOT' : 'Never'}
+                  </div>
+                </div>
+
+                <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800">
+                  <div className="text-[10px] font-mono uppercase text-slate-400 tracking-wider mb-1">
+                    Trigger Count
+                  </div>
+                  <div className="text-2xl font-black font-mono text-emerald-400">
+                    {esp32Info.triggerCount}
+                  </div>
+                  <div className="text-[10px] text-slate-500 font-mono mt-0.5">Diagnostic Counter</div>
+                </div>
+
+                <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-800">
+                  <div className="text-[10px] font-mono uppercase text-slate-400 tracking-wider mb-1">
+                    Last Event Time
+                  </div>
+                  <div className="text-xs font-mono text-slate-200 mt-1">
+                    {esp32Info.lastReceivedAt ? (
+                      new Date(esp32Info.lastReceivedAt).toLocaleTimeString() +
+                      '.' +
+                      String(new Date(esp32Info.lastReceivedAt).getMilliseconds()).padStart(3, '0')
+                    ) : (
+                      '—'
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Visual Trigger Reaction Banner */}
+              <div className={`p-3 rounded-2xl border text-center transition-all duration-200 mb-5 ${
+                hardwarePulse
+                  ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300 shadow-[0_0_20px_rgba(6,182,212,0.3)]'
+                  : 'bg-slate-950/60 border-slate-800 text-slate-500'
+              }`}>
+                <div className="text-xs font-mono font-bold uppercase tracking-wider flex items-center justify-center gap-2">
+                  <Zap className={`w-4 h-4 ${hardwarePulse ? 'fill-current text-cyan-300 animate-bounce' : 'text-slate-600'}`} />
+                  <span>{hardwarePulse ? 'HARDWARE TRIGGER PULSE DETECTED!' : 'AWAITING PHYSICAL BUTTON PRESS...'}</span>
+                </div>
+              </div>
+
+              {/* Diagnostic Controls */}
+              <div className="flex flex-col gap-2">
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={handleResetDiagnostics}
+                    className="py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-mono font-bold transition flex items-center justify-center gap-1.5"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Reset Test Counter</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleSimulateTrigger}
+                    className="py-2.5 px-3 rounded-xl bg-cyan-600/20 hover:bg-cyan-600/30 border border-cyan-500/30 text-cyan-300 text-xs font-mono font-bold transition flex items-center justify-center gap-1.5"
+                  >
+                    <Zap className="w-3.5 h-3.5" />
+                    <span>Simulate Shoot (Test)</span>
+                  </button>
+                </div>
+
+                <div className="flex gap-2 mt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (esp32Status === TRIGGER_STATUS.CONNECTED || esp32Status === TRIGGER_STATUS.CONNECTING) {
+                        esp32Service.disconnectESP32();
+                      } else {
+                        esp32Service.connectESP32();
+                      }
+                    }}
+                    className="flex-1 py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-mono font-medium transition"
+                  >
+                    {esp32Status === TRIGGER_STATUS.CONNECTED ? 'Disconnect WebSocket' : 'Connect / Reconnect'}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowHardwareTestModal(false)}
+                    className="py-2.5 px-5 rounded-xl bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold transition"
+                  >
+                    Close Test Bench
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* 1. VERIFICATION VIEW (Team ID & Game Access Code) */}
         {gameState === STATES.VERIFY && (
           <div className="max-w-xl mx-auto bg-slate-900/90 border border-slate-800 rounded-3xl p-8 shadow-2xl backdrop-blur-xl relative overflow-hidden">
@@ -246,10 +686,10 @@ export default function GameStation() {
                 <span>AI Target Strike Game Station</span>
               </div>
               <h1 className="text-3xl font-black font-display tracking-tight text-white mb-1">
-                GAME ACCESS VERIFICATION
+                ENTER YOUR GAME ACCESS CODE
               </h1>
               <p className="text-slate-400 text-xs">
-                Enter your official Team ID and secret Game Access Code to authorize your 7-minute competition session.
+                Enter your secret Game Access Code to authorize your official 7-minute competition session.
               </p>
             </div>
 
@@ -260,7 +700,51 @@ export default function GameStation() {
               </div>
             )}
 
-            {/* Quick-Pick Called Team (Operator Convenience) */}
+            {/* AUTO USER ID & 1-CLICK QUICK ACCESS BANNER */}
+            <div className="mb-5 p-4 rounded-2xl bg-gradient-to-r from-cyan-950/50 to-indigo-950/50 border border-cyan-500/40 shadow-xl relative overflow-hidden">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="text-xs font-mono font-bold text-cyan-300 flex items-center gap-1.5">
+                    <Zap className="w-4 h-4 fill-current text-cyan-400" />
+                    <span>AUTO USER ID READY</span>
+                    {autoUserSuccess && (
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 text-[10px] font-mono animate-pulse">
+                        ✓ {autoUserSuccess}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[11px] text-slate-300 font-mono mt-1">
+                    Team ID: <span className="text-cyan-300 font-bold font-mono">ATS-0104</span> • Access Code: <span className="text-amber-300 font-bold font-mono">ATS-2026-PLAY</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setInputTeamCode('ATS-0104');
+                      setInputAccessCode('ATS-2026-PLAY');
+                      setSelectedDifficulty('MEDIUM');
+                      setAutoUserSuccess('Loaded ATS-0104');
+                      setTimeout(() => setAutoUserSuccess(null), 3000);
+                    }}
+                    className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-mono font-bold text-slate-200 hover:text-white transition shadow-sm"
+                  >
+                    1-Click Fill ATS-0104
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={autoUserGenerating}
+                    onClick={handleGenerateAndFillAutoUser}
+                    className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-white text-xs font-mono font-bold shadow-lg shadow-cyan-500/25 transition flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    <Zap className="w-3.5 h-3.5 fill-current" />
+                    <span>{autoUserGenerating ? 'Generating...' : '⚡ Generate New Auto ID'}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
             {queueTeams.length > 0 && (
               <div className="mb-5 p-3 rounded-xl bg-slate-950/70 border border-slate-800">
                 <div className="text-[10px] font-mono uppercase text-slate-400 tracking-wider mb-2">
@@ -288,21 +772,7 @@ export default function GameStation() {
             <form onSubmit={handleVerifyAndStart} className="space-y-4">
               <div>
                 <label className="block text-xs font-mono uppercase tracking-wider text-slate-300 mb-1.5">
-                  Official Team ID *
-                </label>
-                <input
-                  type="text"
-                  value={inputTeamCode}
-                  onChange={(e) => setInputTeamCode(e.target.value.toUpperCase())}
-                  placeholder="e.g. ATS-0001"
-                  required
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-white font-mono text-base placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition tracking-wider"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-mono uppercase tracking-wider text-slate-300 mb-1.5">
-                  Secret Game Access Code *
+                  Secret Game Access Code <span className="text-cyan-400">*</span>
                 </label>
                 <div className="relative">
                   <input
@@ -311,33 +781,24 @@ export default function GameStation() {
                     onChange={(e) => setInputAccessCode(e.target.value.toUpperCase())}
                     placeholder="e.g. ATS-K7M9-P2QX"
                     required
-                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-white font-mono text-base placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition tracking-widest"
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-white font-mono text-base placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition tracking-widest text-center"
+                    autoFocus
                   />
                   <KeyRound className="w-4 h-4 text-slate-500 absolute right-4 top-3.5" />
                 </div>
               </div>
 
-              {/* Difficulty Selection */}
               <div>
-                <label className="block text-xs font-mono uppercase tracking-wider text-slate-300 mb-1.5">
-                  Competition Difficulty
+                <label className="block text-xs font-mono uppercase tracking-wider text-slate-400 mb-1.5">
+                  Official Team ID <span className="text-slate-500 font-sans text-[11px]">(Optional — auto-resolved if blank)</span>
                 </label>
-                <div className="grid grid-cols-3 gap-2">
-                  {['EASY', 'MEDIUM', 'HARD'].map((diff) => (
-                    <button
-                      key={diff}
-                      type="button"
-                      onClick={() => setSelectedDifficulty(diff)}
-                      className={`py-2 rounded-xl text-xs font-mono font-bold transition border ${
-                        selectedDifficulty === diff
-                          ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300 shadow-sm shadow-cyan-500/20'
-                          : 'bg-slate-950/80 border-slate-800 text-slate-400 hover:text-slate-200'
-                      }`}
-                    >
-                      {diff}
-                    </button>
-                  ))}
-                </div>
+                <input
+                  type="text"
+                  value={inputTeamCode}
+                  onChange={(e) => setInputTeamCode(e.target.value.toUpperCase())}
+                  placeholder="e.g. ATS-0001 (Optional)"
+                  className="w-full bg-slate-950 border border-slate-700/70 rounded-xl px-4 py-3 text-white font-mono text-sm placeholder-slate-600 focus:outline-none focus:border-cyan-500 transition tracking-wider text-center"
+                />
               </div>
 
               <button
@@ -346,11 +807,11 @@ export default function GameStation() {
                 className="w-full mt-3 py-4 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-white font-bold text-sm shadow-xl shadow-cyan-500/25 transition flex items-center justify-center gap-2 disabled:opacity-50"
               >
                 {loadingVerify ? (
-                  <span>AUTHENTICATING ACCESS CODE...</span>
+                  <span>VERIFYING ACCESS CODE...</span>
                 ) : (
                   <>
                     <ShieldCheck className="w-4 h-4" />
-                    <span>VERIFY CODE & OPEN GAME BRIEFING</span>
+                    <span>CONTINUE</span>
                   </>
                 )}
               </button>
@@ -419,9 +880,9 @@ export default function GameStation() {
                     <span>PLAYER 2: SHOOT CONTROL</span>
                   </div>
                   <div className="text-xs text-slate-300 font-mono">
-                    Key: <span className="text-indigo-300 font-bold">SPACEBAR</span>
+                    <span className="text-cyan-300 font-bold">MOUSE LEFT CLICK</span> (Primary) • <span className="text-emerald-300 font-bold">ESP32 TRIGGER</span> • <span className="text-slate-500 line-through">SPACE</span>
                   </div>
-                  <div className="text-[11px] text-slate-400">Precision hitscan firing & combo chains</div>
+                  <div className="text-[11px] text-slate-400">Single pipeline fires weapon at WASD crosshair position (SPACE disabled)</div>
                 </div>
               </div>
             </div>
@@ -453,10 +914,21 @@ export default function GameStation() {
           <div className="space-y-3">
             {/* Top HUD Bar */}
             <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 shadow-lg">
-              {/* Team Info & Chapter */}
+              {/* Team Info & Active Stage */}
               <div>
-                <div className="text-[10px] font-mono text-cyan-400 font-semibold tracking-wider">
-                  {activeSession?.team_code} • {activeSession?.difficulty}
+                <div className="flex items-center gap-2 mb-0.5">
+                  <span className="text-[11px] font-mono text-cyan-400 font-bold tracking-wider">
+                    {activeSession?.team_code}
+                  </span>
+                  <span className={`px-2 py-0.5 rounded-full border text-[10px] font-mono font-extrabold tracking-wider ${
+                    (hudStats.currentDifficulty || 'EASY') === 'HARD'
+                      ? 'bg-rose-500/20 border-rose-500/40 text-rose-400 animate-pulse'
+                      : (hudStats.currentDifficulty || 'EASY') === 'MEDIUM'
+                      ? 'bg-cyan-500/20 border-cyan-500/40 text-cyan-300'
+                      : 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400'
+                  }`}>
+                    STAGE: {hudStats.currentDifficulty || activeSession?.difficulty || 'EASY'}
+                  </span>
                 </div>
                 <div className="text-lg font-black text-white leading-tight">
                   {activeSession?.team_name}
@@ -501,22 +973,49 @@ export default function GameStation() {
                     </div>
                   </div>
                 )}
+
+                {/* ESP32 Hardware Status Badge in HUD */}
+                <div className="border-l border-slate-800 pl-4 flex flex-col items-end">
+                  <div className="text-[10px] font-mono text-slate-400 uppercase flex items-center gap-1">
+                    <Cpu className="w-3 h-3 text-cyan-400" /> ESP32 Trigger
+                  </div>
+                  <div className={`text-xs font-mono font-bold flex items-center gap-1.5 mt-0.5 ${
+                    esp32Status === TRIGGER_STATUS.CONNECTED
+                      ? 'text-emerald-400'
+                      : esp32Status === TRIGGER_STATUS.CONNECTING
+                      ? 'text-amber-400'
+                      : 'text-slate-400'
+                  }`}>
+                    <span className={`w-1.5 h-1.5 rounded-full ${
+                      esp32Status === TRIGGER_STATUS.CONNECTED ? 'bg-emerald-400 animate-pulse' : 'bg-slate-500'
+                    }`} />
+                    <span>{esp32Status}</span>
+                    {hardwarePulse && <span className="text-cyan-300 animate-ping">●</span>}
+                  </div>
+                </div>
               </div>
             </div>
 
             {/* Game Canvas Viewport */}
-            <div className="relative rounded-2xl overflow-hidden border border-slate-800 shadow-2xl bg-slate-950 flex items-center justify-center">
+            <div className="relative rounded-2xl overflow-hidden border border-slate-800 shadow-2xl bg-slate-950 flex items-center justify-center min-h-[460px]">
               <canvas
                 ref={canvasRef}
-                className="w-full h-auto cursor-none select-none block"
+                style={{ minHeight: '440px', width: '100%', display: 'block', background: '#020617' }}
+                className="w-full h-auto cursor-crosshair select-none block"
               />
             </div>
 
             {/* Bottom Controls Legend */}
             <div className="flex items-center justify-between text-xs text-slate-400 px-2 font-mono">
-              <div className="flex items-center gap-2">
-                <span className="px-2 py-0.5 rounded bg-slate-800 text-cyan-300 font-bold">P1 AIM: WASD</span>
-                <span className="px-2 py-0.5 rounded bg-slate-800 text-indigo-300 font-bold">P2 FIRE: SPACE</span>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="px-2.5 py-1 rounded-lg bg-slate-800 text-cyan-300 font-bold flex items-center gap-1.5">
+                  <Crosshair className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>AIM: W A S D KEYS</span>
+                </span>
+                <span className="px-2.5 py-1 rounded-lg bg-slate-800 text-indigo-300 font-bold flex items-center gap-1.5">
+                  <Zap className="w-3.5 h-3.5 fill-current text-indigo-400" />
+                  <span>SHOOT: MOUSE LEFT-CLICK or ESP32 TRIGGER</span>
+                </span>
               </div>
               <div>
                 Hits: <span className="text-white font-bold">{hudStats.hits}</span> / Shots: <span className="text-white font-bold">{hudStats.totalShots}</span>

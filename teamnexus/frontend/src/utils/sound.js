@@ -162,6 +162,56 @@ class SoundEngine {
     osc2.start(now + 0.2);
     osc2.stop(now + 0.65);
   }
+
+  playLevelUp() {
+    if (this.muted) return;
+    this.init();
+    if (!this.ctx) return;
+
+    // Triumphant ascending arpeggio for difficulty / stage transition
+    const now = this.ctx.currentTime;
+    const notes = [523.25, 659.25, 783.99, 1046.50]; // C5, E5, G5, C6
+    notes.forEach((freq, idx) => {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      const noteTime = now + (idx * 0.08);
+
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(freq, noteTime);
+      gain.gain.setValueAtTime(0.28, noteTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, noteTime + 0.25);
+
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+      osc.start(noteTime);
+      osc.stop(noteTime + 0.25);
+    });
+  }
+
+  playGameOver() {
+    if (this.muted) return;
+    this.init();
+    if (!this.ctx) return;
+
+    // Dramatic descending futuristic completion chime
+    const now = this.ctx.currentTime;
+    const notes = [783.99, 659.25, 523.25, 392.00]; // G5, E5, C5, G4
+    notes.forEach((freq, idx) => {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      const noteTime = now + (idx * 0.12);
+
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(freq, noteTime);
+      gain.gain.setValueAtTime(0.22, noteTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, noteTime + 0.35);
+
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+      osc.start(noteTime);
+      osc.stop(noteTime + 0.35);
+    });
+  }
 }
 
 export const sound = new SoundEngine();

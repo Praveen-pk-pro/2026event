@@ -4,7 +4,11 @@ from app.services.queue_manager import QueueManager
 from app.utils.sqlite_db import get_db_connection, init_db
 
 @pytest.fixture(autouse=True)
-def setup_db():
+def setup_db(tmp_path, monkeypatch):
+    from app.utils import sqlite_db
+
+    monkeypatch.setattr(sqlite_db, "DATABASE_FILE", str(tmp_path / "test.sqlite"))
+    monkeypatch.setattr(sqlite_db, "UPLOAD_FOLDER", str(tmp_path / "uploads"))
     init_db()
 
 def test_anti_cheat_rejects_negative_scores():

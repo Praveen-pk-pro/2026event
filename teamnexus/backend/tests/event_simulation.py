@@ -1,5 +1,6 @@
 import json
 import time
+import os
 from app import create_app
 from app.utils.sqlite_db import get_db_connection
 
@@ -8,6 +9,9 @@ def run_event_simulation():
     print("      AI TARGET STRIKE — 100-TEAM EVENT SIMULATION ENGINE        ")
     print("=================================================================")
     
+    admin_password = os.environ.get("INITIAL_ADMIN_PASSWORD")
+    if not admin_password:
+        raise RuntimeError("Set INITIAL_ADMIN_PASSWORD before running this simulation.")
     app = create_app()
     client = app.test_client()
 
@@ -67,7 +71,10 @@ def run_event_simulation():
 
     # Step 3: Admin Login
     print("\n[STEP 3] Authenticating Organizer / Admin...")
-    login_resp = client.post('/api/admin/login', json={"username": "admin", "password": "adminPassword2026!"})
+    login_resp = client.post('/api/admin/login', json={
+        "username": os.environ.get("INITIAL_ADMIN_USERNAME", "admin"),
+        "password": admin_password
+    })
     assert login_resp.status_code == 200
     token = login_resp.json['token']
     admin_headers = {"Authorization": f"Bearer {token}"}

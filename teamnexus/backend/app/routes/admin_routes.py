@@ -14,7 +14,6 @@ from app.services.queue_manager import QueueManager
 from app.routes.api_routes import notify_clients, generate_access_code, hash_access_code
 
 admin_bp = Blueprint('admin', __name__)
-JWT_SECRET = "ai_target_strike_super_secret_jwt_key_2026!"
 
 def admin_required(f):
     @wraps(f)
@@ -30,7 +29,7 @@ def admin_required(f):
             return jsonify({"success": False, "error": "Admin authentication token required."}), 401
 
         try:
-            payload = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
+            payload = jwt.decode(token, current_app.config['JWT_SECRET_KEY'], algorithms=['HS256'])
             request.admin_user = payload
         except Exception:
             return jsonify({"success": False, "error": "Invalid or expired admin session token."}), 401
@@ -80,7 +79,7 @@ def admin_login():
         "user_id": user['id'],
         "username": user['username'],
         "role": user['role']
-    }, JWT_SECRET, algorithm='HS256')
+    }, current_app.config['JWT_SECRET_KEY'], algorithm='HS256')
 
     log_audit(user['username'], 'ADMIN_LOGIN_SUCCESS', 'AUTH')
 

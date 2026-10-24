@@ -15,7 +15,7 @@ export default function Leaderboard() {
     // Listen to SSE updates
     let eventSource = null;
     try {
-      eventSource = new EventSource('http://localhost:5000/api/events/stream');
+      eventSource = new EventSource(api.getStreamUrl());
       eventSource.addEventListener('LEADERBOARD_UPDATE', () => {
         fetchLeaderboard();
       });

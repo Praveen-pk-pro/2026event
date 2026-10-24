@@ -11,7 +11,13 @@ export default function EventPasswordGate({ children }) {
   const [error, setError] = useState(null);
 
   useEffect(() => {
+    // Clear previous pass so fresh navigation to registration always asks for password
+    api.clearEventPass();
     checkStatus();
+    return () => {
+      // Clear temporary authorization when participant navigates away
+      api.clearEventPass();
+    };
   }, []);
 
   const checkStatus = async () => {
@@ -34,8 +40,9 @@ export default function EventPasswordGate({ children }) {
       }
     } catch (err) {
       console.warn("Could not check event password status:", err.message);
-      // In offline or default mode, fallback to open unless error requires prompt
-      setHasAccess(true);
+      setPasswordRequired(true);
+      setHasAccess(false);
+      setError("Backend connection error: Unable to reach event server at http://127.0.0.1:5000. Please verify the backend service is running.");
     } finally {
       setChecking(false);
     }

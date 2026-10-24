@@ -1,6 +1,7 @@
 import os
 import sqlite3
 from datetime import datetime
+from config import Config
 
 DATABASE_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "aitargetstrike.db")
 UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.dirname(__file__)), "secure_uploads")
@@ -13,7 +14,8 @@ def get_db_connection():
     conn.execute("PRAGMA journal_mode = WAL;")
     return conn
 
-def init_db():
+def init_db(config=None):
+    config = config or Config
     os.makedirs(UPLOAD_FOLDER, exist_ok=True)
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -47,11 +49,29 @@ def init_db():
     );
     """)
 
+    from werkzeug.security import generate_password_hash
+    event_password = config.get("REGISTRATION_GATE_PASSWORD") if hasattr(config, "get") else config.REGISTRATION_GATE_PASSWORD
+    initial_event_pw_hash = (
+        generate_password_hash(event_password, method="scrypt")
+        if event_password
+        else None
+    )
+
     cursor.execute("SELECT COUNT(*) FROM system_config WHERE id = 1;")
     if cursor.fetchone()[0] == 0:
         cursor.execute("""
-        INSERT INTO system_config (id, event_name, game_duration) VALUES (1, 'AI TARGET STRIKE 2026', 420);
-        """)
+        INSERT INTO system_config (id, event_name, game_duration, event_password_hash, event_password_enabled)
+        VALUES (1, 'AI TARGET STRIKE 2026', 420, ?, ?);
+        """, (initial_event_pw_hash, int(initial_event_pw_hash is not None)))
+    else:
+        cursor.execute("SELECT event_password_hash FROM system_config WHERE id = 1;")
+        row = cursor.fetchone()
+        if initial_event_pw_hash and (not row or not row[0]):
+            cursor.execute("""
+            UPDATE system_config
+            SET event_password_hash = ?, event_password_enabled = 1
+                WHERE id = 1;
+            """, (initial_event_pw_hash,))
 
     # 2. Teams Table
     cursor.execute("""
@@ -190,13 +210,14 @@ def init_db():
     );
     """)
 
-    # Pre-seed default Admin if not exists (username: admin, password: adminPassword2026!)
-    cursor.execute("SELECT COUNT(*) FROM admin_users WHERE username = 'admin';")
-    if cursor.fetchone()[0] == 0:
-        from werkzeug.security import generate_password_hash
-        pwd_hash = generate_password_hash("adminPassword2026!", method="scrypt")
-        cursor.execute("INSERT INTO admin_users (username, password_hash, role) VALUES (?, ?, ?);",
-                       ('admin', pwd_hash, 'ADMIN'))
+    admin_username = config.get("INITIAL_ADMIN_USERNAME", "admin") if hasattr(config, "get") else config.INITIAL_ADMIN_USERNAME
+    admin_password = config.get("INITIAL_ADMIN_PASSWORD") if hasattr(config, "get") else config.INITIAL_ADMIN_PASSWORD
+    if admin_password:
+        cursor.execute("SELECT COUNT(*) FROM admin_users WHERE username = ?;", (admin_username,))
+        if cursor.fetchone()[0] == 0:
+            pwd_hash = generate_password_hash(admin_password, method="scrypt")
+            cursor.execute("INSERT INTO admin_users (username, password_hash, role) VALUES (?, ?, ?);",
+                           (admin_username, pwd_hash, 'ADMIN'))
 
     conn.commit()
     conn.close()

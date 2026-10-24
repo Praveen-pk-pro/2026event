@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Navbar from './components/Navbar';
 import GameStation from './pages/GameStation';
 import Registration from './pages/Registration';
@@ -36,6 +36,7 @@ function AppLayout() {
             }
           />
           <Route path="/queue" element={<QueueDisplay />} />
+          <Route path="/scoreboard" element={<Leaderboard />} />
           <Route path="/leaderboard" element={<Leaderboard />} />
           <Route path="/admin" element={<AdminDashboard />} />
           <Route path="*" element={<Navigate to="/game" replace />} />
@@ -47,8 +48,8 @@ function AppLayout() {
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <HashRouter>
       <AppLayout />
-    </BrowserRouter>
+    </HashRouter>
   );
 }

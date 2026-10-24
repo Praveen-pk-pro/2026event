@@ -46,21 +46,25 @@ class ESP32TriggerService {
     if (!formatted.startsWith('ws://') && !formatted.startsWith('wss://')) {
       formatted = `ws://${formatted}`;
     }
-    if (!formatted.endsWith('/')) {
-      formatted = `${formatted}/`;
+    // Remove trailing slash temporarily for port inspection
+    if (formatted.endsWith('/')) {
+      formatted = formatted.slice(0, -1);
     }
+    // Check if port is specified after the host
+    const urlWithoutProtocol = formatted.replace(/^wss?:\/\//, '');
+    if (!urlWithoutProtocol.includes(':')) {
+      // Auto-attach default ESP32 WebSocket port 81
+      formatted = `${formatted}:81`;
+    }
+    formatted = `${formatted}/`;
 
     this.url = formatted;
     try {
       localStorage.setItem(STORAGE_KEY_URL, formatted);
     } catch {}
 
-    // If currently connected or connecting, reconnect with new address
-    if (this.status === TRIGGER_STATUS.CONNECTED || this.status === TRIGGER_STATUS.CONNECTING) {
-      this.connectESP32(this.url);
-    } else {
-      this.notifyStatus();
-    }
+    // If currently connected or connecting or reconnecting, connect with new address
+    this.connectESP32(this.url);
   }
 
   getUrl() {
@@ -265,6 +269,10 @@ class ESP32TriggerService {
     this.triggerCount = 0;
     this.lastReceivedAt = null;
     this.notifyStatus();
+  }
+
+  simulateTrigger() {
+    this.handleMessage({ data: 'SHOOT' });
   }
 }
 

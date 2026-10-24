@@ -251,9 +251,6 @@ export default function AdminDashboard() {
             </button>
           </form>
 
-          <div className="mt-6 text-[11px] text-slate-500 font-mono">
-            Default credentials: admin / adminPassword2026!
-          </div>
         </div>
       </div>
     );

@@ -15,7 +15,6 @@ from app.services.anti_cheat import AntiCheatEngine
 
 api_bp = Blueprint('api', __name__)
 
-JWT_EVENT_SECRET = "ai_target_strike_public_event_gate_token_2026!"
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'webp'}
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
 
@@ -115,20 +114,30 @@ def verify_event_password():
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT event_password_hash, event_password_enabled FROM system_config WHERE id = 1;")
-    cfg = cursor.fetchone()
+    row = cursor.fetchone()
     conn.close()
 
-    if not cfg or not cfg['event_password_enabled']:
+    if not row or not row['event_password_enabled']:
         # If no password enabled, grant immediate event pass
         token = jwt.encode({"scope": "event_access", "exp": datetime.now(timezone.utc) + timedelta(hours=12)},
-                           JWT_EVENT_SECRET, algorithm="HS256")
+                           current_app.config['JWT_EVENT_SECRET'], algorithm="HS256")
         return jsonify({"success": True, "token": token})
 
-    if not password or not cfg['event_password_hash'] or not check_password_hash(cfg['event_password_hash'], password):
-        return jsonify({"success": False, "error": "Invalid event access password."}), 401
+    cfg = dict(row)
+    valid = False
+    if cfg.get('event_password_hash') and check_password_hash(cfg['event_password_hash'], password):
+        valid = True
+    elif (
+        current_app.config['REGISTRATION_GATE_PASSWORD']
+        and password == current_app.config['REGISTRATION_GATE_PASSWORD']
+    ):
+        valid = True
 
-    token = jwt.encode({"scope": "event_access", "exp": datetime.now(timezone.utc) + timedelta(hours=12)},
-                       JWT_EVENT_SECRET, algorithm="HS256")
+    if not valid:
+        return jsonify({"success": False, "error": "Invalid registration access password. Please try again."}), 401
+
+    token = jwt.encode({"scope": "registration_access", "exp": datetime.now(timezone.utc) + timedelta(hours=2)},
+                       current_app.config['JWT_EVENT_SECRET'], algorithm="HS256")
     return jsonify({"success": True, "token": token})
 
 
@@ -221,18 +230,18 @@ def register_team():
             except Exception:
                 p2_file_bytes = None
 
-    # Mandatory text validations
+    # Mandatory text validations (Roll number is optional)
     if not team_name:
         conn.close()
         return jsonify({"success": False, "error": "Team Name is required."}), 400
 
-    if not all([p1_name, p1_college, p1_phone, p1_roll]):
+    if not all([p1_name, p1_college, p1_phone]):
         conn.close()
-        return jsonify({"success": False, "error": "All Player 1 (Aim) details are mandatory."}), 400
+        return jsonify({"success": False, "error": "Player 1 (Aim) Name, College, and Mobile Number are required."}), 400
 
-    if not all([p2_name, p2_college, p2_phone, p2_roll]):
+    if not all([p2_name, p2_college, p2_phone]):
         conn.close()
-        return jsonify({"success": False, "error": "All Player 2 (Shoot) details are mandatory."}), 400
+        return jsonify({"success": False, "error": "Player 2 (Shoot) Name, College, and Mobile Number are required."}), 400
 
     # Phone numbers validation (at least 10 digits)
     clean_p1_phone = ''.join(filter(str.isdigit, p1_phone))
@@ -241,11 +250,19 @@ def register_team():
         conn.close()
         return jsonify({"success": False, "error": "Please provide valid 10-digit mobile numbers for both players."}), 400
 
-    # Duplicate check for roll number or phone
-    cursor.execute("""
+    # Duplicate check for phone or optional roll number
+    dup_conditions = ["phone IN (?, ?)"]
+    dup_params = [clean_p1_phone, clean_p2_phone]
+    non_empty_rolls = [r for r in [p1_roll, p2_roll] if r]
+    if non_empty_rolls:
+        placeholders = ', '.join(['?'] * len(non_empty_rolls))
+        dup_conditions.append(f"roll_number IN ({placeholders})")
+        dup_params.extend(non_empty_rolls)
+
+    cursor.execute(f"""
         SELECT COUNT(*) FROM participants 
-        WHERE phone IN (?, ?) OR roll_number IN (?, ?)
-    """, (clean_p1_phone, clean_p2_phone, p1_roll, p2_roll))
+        WHERE {' OR '.join(dup_conditions)}
+    """, dup_params)
     if cursor.fetchone()[0] > 0:
         conn.close()
         return jsonify({"success": False, "error": "One or both players have already registered for this event."}), 409
@@ -360,6 +377,78 @@ def register_team():
 
 
 # -------------------------------------------------------------
+# 1.5. AUTO USER / DEMO TEAM GENERATOR
+# -------------------------------------------------------------
+@api_bp.route('/auto-user/create', methods=['POST', 'GET'])
+def create_auto_user():
+    """Create a verified, ready-to-play auto user ID and game access code on demand"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("SELECT COALESCE(MAX(queue_number), 0) + 1 FROM teams;")
+        next_q = cursor.fetchone()[0]
+
+        team_code = f"ATS-{next_q:04d}"
+        raw_access_code = generate_access_code()
+        access_hash = hash_access_code(raw_access_code)
+        team_name = f"AUTO PILOT {next_q:04d}"
+        college = "Nexus Autonomous Systems"
+
+        # Insert team
+        cursor.execute("""
+            INSERT INTO teams (team_code, team_name, college_name, queue_number, status)
+            VALUES (?, ?, ?, ?, 'WAITING')
+        """, (team_code, team_name, college, next_q))
+        team_id = cursor.lastrowid
+
+        # Insert Player 1 & 2
+        cursor.execute("""
+            INSERT INTO participants (team_id, player_role, name, college, phone, roll_number, id_card_filename)
+            VALUES (?, 'PLAYER_1_AIM', 'Auto Aim Player', ?, '9876500001', 'AUTO-01', 'auto_id.png')
+        """, (team_id, college))
+
+        cursor.execute("""
+            INSERT INTO participants (team_id, player_role, name, college, phone, roll_number, id_card_filename)
+            VALUES (?, 'PLAYER_2_SHOOT', 'Auto Shoot Player', ?, '9876500002', 'AUTO-02', 'auto_id.png')
+        """, (team_id, college))
+
+        # Insert Access Credential
+        cursor.execute("""
+            INSERT INTO access_credentials (team_id, credential_hash)
+            VALUES (?, ?)
+        """, (team_id, access_hash))
+
+        # Queue Event
+        cursor.execute("""
+            INSERT INTO queue_events (team_id, event_type, details, triggered_by)
+            VALUES (?, 'REGISTERED', 'On-demand auto user created for instant gameplay', 'AUTO_PORTAL')
+        """, (team_id,))
+
+        conn.commit()
+
+        # Notify queue clients
+        public_queue = QueueManager.get_public_queue(conn)
+        notify_clients('QUEUE_UPDATE', public_queue)
+        conn.close()
+
+        return jsonify({
+            "success": True,
+            "message": "Auto User ID successfully generated!",
+            "team_code": team_code,
+            "access_code": raw_access_code,
+            "team_name": team_name,
+            "queue_number": next_q,
+            "status": "WAITING"
+        }), 201
+
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        return jsonify({"success": False, "error": f"Failed to generate auto user: {str(e)}"}), 500
+
+
+# -------------------------------------------------------------
 # 2. GAME ACCESS & VERIFICATION HANDSHAKE
 # -------------------------------------------------------------
 @api_bp.route('/game-access/verify', methods=['POST'])
@@ -369,22 +458,55 @@ def verify_game_access():
     access_code = data.get('access_code', '').strip().upper()
     requested_difficulty = data.get('difficulty', '').strip().upper()
 
-    if not team_code or not access_code:
-        return jsonify({"success": False, "error": "Both Team ID and Game Access Code are required."}), 400
+    if not access_code:
+        return jsonify({"success": False, "error": "Game Access Code is required."}), 400
 
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    # 1. Lookup team
-    cursor.execute("""
-        SELECT id, team_code, team_name, status, college_name
-        FROM teams WHERE team_code = ?
-    """, (team_code,))
-    team = cursor.fetchone()
+    code_hash = hash_access_code(access_code)
 
-    if not team:
-        conn.close()
-        return jsonify({"success": False, "error": "Team ID not found. Please check and re-enter."}), 404
+    # 1. Lookup team: by access code directly or combined with team_code if provided
+    if not team_code:
+        cursor.execute("""
+            SELECT t.id, t.team_code, t.team_name, t.status, t.college_name, c.revoked_at
+            FROM access_credentials c
+            JOIN teams t ON c.team_id = t.id
+            WHERE c.credential_hash = ?
+            ORDER BY c.issued_at DESC LIMIT 1
+        """, (code_hash,))
+        row = cursor.fetchone()
+        if not row:
+            conn.close()
+            return jsonify({"success": False, "error": "Invalid access code. Please check your code and try again."}), 401
+        if row['revoked_at']:
+            conn.close()
+            return jsonify({"success": False, "error": "This game access code has been revoked by administrators."}), 403
+        team = row
+    else:
+        cursor.execute("""
+            SELECT id, team_code, team_name, status, college_name
+            FROM teams WHERE team_code = ?
+        """, (team_code,))
+        team = cursor.fetchone()
+
+        if not team:
+            conn.close()
+            return jsonify({"success": False, "error": "Team ID not found. Please check and re-enter."}), 404
+
+        cursor.execute("""
+            SELECT id, revoked_at FROM access_credentials
+            WHERE team_id = ? AND credential_hash = ?
+        """, (team['id'], code_hash))
+        cred = cursor.fetchone()
+
+        if not cred:
+            conn.close()
+            return jsonify({"success": False, "error": "Invalid access code. Please check your code and try again."}), 401
+
+        if cred['revoked_at']:
+            conn.close()
+            return jsonify({"success": False, "error": "This game access code has been revoked by administrators."}), 403
 
     # 2. Check team eligibility
     if team['status'] == 'COMPLETED':
@@ -394,22 +516,6 @@ def verify_game_access():
     if team['status'] == 'CANCELLED':
         conn.close()
         return jsonify({"success": False, "error": "This team's registration was cancelled by event administrators."}), 403
-
-    # 3. Check access credential hash
-    code_hash = hash_access_code(access_code)
-    cursor.execute("""
-        SELECT id, revoked_at FROM access_credentials
-        WHERE team_id = ? AND credential_hash = ?
-    """, (team['id'], code_hash))
-    cred = cursor.fetchone()
-
-    if not cred:
-        conn.close()
-        return jsonify({"success": False, "error": "Invalid game access code for this team."}), 401
-
-    if cred['revoked_at']:
-        conn.close()
-        return jsonify({"success": False, "error": "This game access code has been revoked by administrators."}), 403
 
     # 4. Check system configuration
     cursor.execute("SELECT * FROM system_config WHERE id = 1;")

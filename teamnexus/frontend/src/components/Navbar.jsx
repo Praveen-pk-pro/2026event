@@ -17,8 +17,7 @@ export default function Navbar() {
     { to: '/game', label: 'Game Station', icon: Target },
     { to: '/register', label: 'Register Team', icon: Users },
     { to: '/queue', label: 'Live Queue (Projector)', icon: Tv },
-    { to: '/leaderboard', label: 'Scoreboard', icon: Trophy },
-    { to: '/admin', label: 'Admin Console', icon: ShieldCheck },
+    { to: '/scoreboard', label: 'Scoreboard', icon: Trophy },
   ];
 
   return (
@@ -45,7 +44,7 @@ export default function Navbar() {
           <div className="hidden md:flex items-center gap-1">
             {navLinks.map((link) => {
               const Icon = link.icon;
-              const isActive = location.pathname === link.to;
+              const isActive = location.pathname === link.to || (link.to === '/scoreboard' && location.pathname === '/leaderboard');
               return (
                 <Link
                   key={link.to}
@@ -86,7 +85,7 @@ export default function Navbar() {
       <div className="md:hidden flex overflow-x-auto py-2 px-4 gap-2 border-t border-slate-800/80 bg-slate-950/60 text-xs">
         {navLinks.map((link) => {
           const Icon = link.icon;
-          const isActive = location.pathname === link.to;
+          const isActive = location.pathname === link.to || (link.to === '/scoreboard' && location.pathname === '/leaderboard');
           return (
             <Link
               key={link.to}

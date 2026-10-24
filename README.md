@@ -50,6 +50,11 @@ Each match runs on an authoritative **7-minute (420 seconds)** timer across thre
 
 ## 4. Quick Start (Windows)
 
+Before first launch, copy `teamnexus/backend/.env.example` to
+`teamnexus/backend/.env` and set unique application secrets and an initial
+admin password. The initial admin account is created only when the database
+is first initialized with `INITIAL_ADMIN_PASSWORD`.
+
 ### Option A: 1-Click Launch
 Double-click `run_all.bat` in the project root:
 ```cmd
@@ -84,9 +89,10 @@ All 12 automated unit and integration tests will execute and verify system integ
 
 ---
 
-## 6. Default Admin Credentials
+## 6. Credentials and secrets
 
-- **Username**: `admin`
-- **Password**: `adminPassword2026!`
+The application does not ship with default admin, event-gate, or signing
+credentials. Configure them in `teamnexus/backend/.env` before starting the
+backend. Use unique, randomly generated secrets for each deployment.
 
 See [DEPLOYMENT.md](file:///d:/Game%20Event%20Registation/DEPLOYMENT.md) for production Nginx, systemd, HTTPS, and data retention guidelines.

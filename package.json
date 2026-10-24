@@ -4,10 +4,13 @@
   "private": true,
   "description": "AI TARGET STRIKE - 2-Player Competitive Event & Live Queue Management System",
   "scripts": {
-    "dev": "npm --prefix teamnexus/frontend run dev",
+    "dev": "node dev-runner.mjs",
+    "frontend": "npm --prefix teamnexus/frontend run dev",
+    "backend": "powershell -Command \"$env:PYTHONPATH='teamnexus/backend'; .\\teamnexus\\backend\\venv\\Scripts\\python.exe teamnexus/backend/run.py\"",
     "build": "npm --prefix teamnexus/frontend run build",
     "preview": "npm --prefix teamnexus/frontend run preview",
-    "backend": "powershell -Command \"$env:PYTHONPATH='teamnexus/backend'; .\\teamnexus\\backend\\venv\\Scripts\\python.exe teamnexus/backend/run.py\"",
-    "start": "powershell -Command \".\\run_all.bat\""
+    "live-server": "npm --prefix teamnexus/frontend run preview -- --port 5500 --host 0.0.0.0",
+    "start": "node dev-runner.mjs",
+    "admin:terminal": "start start_admin_terminal.bat"
   }
 }

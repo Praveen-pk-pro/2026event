@@ -77,12 +77,12 @@ Double-click `run_all.bat` in the root project folder. It launches:
 
 ---
 
-## 4. Default Admin Credentials
+## 4. Initial Admin and Event Credentials
 
-- **Username**: `admin`
-- **Password**: `adminPassword2026!`
-
-*(Note: In the Admin Console under Event Settings, administrators can also configure the public Event Access Password for visitors).*
+Set `INITIAL_ADMIN_USERNAME` and `INITIAL_ADMIN_PASSWORD` before the first
+database initialization. The initial admin account is created only if that
+username does not already exist. Set `REGISTRATION_GATE_PASSWORD` only when a
+registration gate is required.
 
 ---
 
@@ -100,17 +100,29 @@ Create `teamnexus/backend/.env`:
 ```ini
 FLASK_ENV=production
 PORT=5000
-JWT_SECRET=replace_with_a_cryptographically_secure_random_key_64_chars!
-JWT_EVENT_SECRET=replace_with_another_secure_key_for_event_gate!
+SECRET_KEY=<unique-random-secret>
+JWT_SECRET_KEY=<unique-random-secret>
+JWT_EVENT_SECRET=<unique-random-secret>
+INITIAL_ADMIN_USERNAME=admin
+INITIAL_ADMIN_PASSWORD=<unique-admin-password>
+REGISTRATION_GATE_PASSWORD=<optional-event-gate-password>
 DATABASE_FILE=/var/lib/aitargetstrike/aitargetstrike.db
 UPLOAD_FOLDER=/var/lib/aitargetstrike/secure_uploads
 MAX_UPLOAD_SIZE_BYTES=5242880
 ```
 
+Generate each signing key with a cryptographically secure random generator.
+Never commit `.env` or use the same secrets across deployments. Without
+explicitly configured signing keys, a random process-local key is generated;
+tokens will be invalidated whenever that process restarts.
+
 Create `teamnexus/frontend/.env.production`:
 ```ini
 VITE_API_BASE_URL=https://event.yourdomain.com/api
 ```
+
+For ESP32 firmware, define `ESP32_AP_PASSWORD` as a build flag before
+compilation. The firmware intentionally fails to compile without it.
 
 ### Step 2: Database Initialization & Migrations
 ```bash

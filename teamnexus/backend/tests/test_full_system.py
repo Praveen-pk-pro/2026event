@@ -1,22 +1,30 @@
-import os
 import json
 import base64
 import uuid
 import random
 import pytest
 from app import create_app
-from app.utils.sqlite_db import get_db_connection, init_db
 from app.routes.api_routes import generate_access_code, hash_access_code, verify_image_bytes
+from app.utils.sqlite_db import get_db_connection, init_db
 
 TINY_PNG_B64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+TEST_ADMIN_USERNAME = "test-admin"
+TEST_ADMIN_PASSWORD = "test-only-password"
 
 @pytest.fixture
-def client():
-    app = create_app()
+def client(tmp_path, monkeypatch):
+    from app.utils import sqlite_db
+
+    monkeypatch.setattr(sqlite_db, "DATABASE_FILE", str(tmp_path / "test.sqlite"))
+    monkeypatch.setattr(sqlite_db, "UPLOAD_FOLDER", str(tmp_path / "uploads"))
+    app = create_app({
+        "INITIAL_ADMIN_USERNAME": TEST_ADMIN_USERNAME,
+        "INITIAL_ADMIN_PASSWORD": TEST_ADMIN_PASSWORD,
+        "JWT_SECRET_KEY": "test-jwt-secret-with-at-least-32-bytes",
+        "JWT_EVENT_SECRET": "test-event-jwt-secret-with-at-least-32-bytes",
+    })
     app.config['TESTING'] = True
     with app.test_client() as client:
-        with app.app_context():
-            init_db()
         yield client
 
 def test_image_magic_bytes_validator():
@@ -44,6 +52,24 @@ def test_access_code_generator_and_hasher():
     h2 = hash_access_code(code.lower())
     assert h1 == h2  # Case-insensitive normalization
     assert len(h1) == 64  # SHA-256 hex string
+
+def test_database_does_not_seed_credentials_without_configuration(tmp_path, monkeypatch):
+    from app.utils import sqlite_db
+
+    monkeypatch.setattr(sqlite_db, "DATABASE_FILE", str(tmp_path / "test.sqlite"))
+    monkeypatch.setattr(sqlite_db, "UPLOAD_FOLDER", str(tmp_path / "uploads"))
+    init_db({})
+
+    conn = get_db_connection()
+    admin_count = conn.execute("SELECT COUNT(*) FROM admin_users").fetchone()[0]
+    event_config = conn.execute(
+        "SELECT event_password_hash, event_password_enabled FROM system_config WHERE id = 1"
+    ).fetchone()
+    conn.close()
+
+    assert admin_count == 0
+    assert event_config["event_password_hash"] is None
+    assert event_config["event_password_enabled"] == 0
 
 def test_registration_rejects_missing_mandatory_id(client):
     uid = uuid.uuid4().hex[:6]
@@ -131,8 +157,8 @@ def test_admin_auth_and_security(client):
 
     # Valid admin login
     login_res = client.post('/api/admin/login', json={
-        "username": "admin",
-        "password": "adminPassword2026!"
+        "username": TEST_ADMIN_USERNAME,
+        "password": TEST_ADMIN_PASSWORD
     })
     assert login_res.status_code == 200
     token = login_res.get_json()["token"]
@@ -141,3 +167,45 @@ def test_admin_auth_and_security(client):
     auth_res = client.get('/api/admin/stats', headers={"Authorization": f"Bearer {token}"})
     assert auth_res.status_code == 200
     assert auth_res.get_json()["success"]
+
+def test_registration_with_optional_blank_roll_numbers_and_access_code_alone(client):
+    uid = uuid.uuid4().hex[:6]
+    rand_phone1 = f"95555{random.randint(10000, 99999)}"
+    rand_phone2 = f"96666{random.randint(10000, 99999)}"
+
+    # Registration with empty roll numbers (roll numbers optional)
+    res = client.post('/api/register', json={
+        "team_name": f"STRIKE FORCE {uid}",
+        "college_name": "Autonomous Tech Campus",
+        "p1_name": "Maya Lin",
+        "p1_roll": "", # Blank optional roll
+        "p1_phone": rand_phone1,
+        "p1_id_card_data": TINY_PNG_B64,
+        "p2_name": "Devin Vance",
+        "p2_roll": "", # Blank optional roll
+        "p2_phone": rand_phone2,
+        "p2_id_card_data": TINY_PNG_B64
+    })
+    assert res.status_code == 201
+    data = res.get_json()
+    assert data["success"]
+    access_code = data["access_code"]
+    team_code = data["team_code"]
+
+    # Verify game access using ACCESS CODE ALONE (without providing team_code)
+    auth_res = client.post('/api/game-access/verify', json={
+        "access_code": access_code
+    })
+    assert auth_res.status_code == 200
+    auth_data = auth_res.get_json()
+    assert auth_data["success"]
+    assert auth_data["team_code"] == team_code
+    assert auth_data["duration_seconds"] == 420
+    assert "session_token" in auth_data
+
+    # Verify invalid code error message matches requirement
+    wrong_res = client.post('/api/game-access/verify', json={
+        "access_code": "ATS-INVALID-CODE"
+    })
+    assert wrong_res.status_code == 401
+    assert "Invalid access code. Please check your code and try again." in wrong_res.get_json()["error"]
