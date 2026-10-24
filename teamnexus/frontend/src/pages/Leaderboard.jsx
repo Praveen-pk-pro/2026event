@@ -232,8 +232,8 @@ export default function Leaderboard() {
         </div>
 
         {/* Tie Breaker Legend */}
-        <div className="mt-4 text-center text-xs text-slate-500 font-mono">
-          Tie-breaker rule: 1. Total Score $\to$ 2. Accuracy % $\to$ 3. Total Hits $\to$ 4. Official Duration. Personal participant details remain strictly private.
+        <div className="mt-4 text-center text-xs text-slate-400 font-mono">
+          Tie-breaker rule: 1. Total Score → 2. Accuracy % → 3. Total Hits → 4. Official Duration. Personal participant details remain strictly private.
         </div>
 
       </div>

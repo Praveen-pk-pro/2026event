@@ -173,7 +173,7 @@ export default function QueueDisplay() {
 
           <div className="pt-4 border-t border-slate-800/80 flex items-center justify-between text-xs font-mono text-slate-400">
             <span>2-PLAYER CO-OP ENGAGED</span>
-            <span>WASD (AIM) + SPACE (SHOOT)</span>
+            <span>P1: WASD (AIM) • P2: MOUSE CLICK / ESP32 TRIGGER (SHOOT)</span>
           </div>
         </div>
 

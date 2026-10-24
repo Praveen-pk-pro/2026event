@@ -96,6 +96,10 @@ export default function Registration() {
       setError('Please enter valid 10-digit mobile numbers for both participants.');
       return;
     }
+    if (cleanP1Phone === cleanP2Phone) {
+      setError('Player 1 and Player 2 cannot share the same mobile phone number.');
+      return;
+    }
 
     // 3. Mandatory ID Card Upload Check
     if (!p1Image || !p2Image) {

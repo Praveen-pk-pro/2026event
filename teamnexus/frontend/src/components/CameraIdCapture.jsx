@@ -238,6 +238,33 @@ export default function CameraIdCapture({
     setCameraError(null);
   };
 
+  const compressImage = (dataUrl, maxDim = 1600, quality = 0.85) => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        let width = img.width;
+        let height = img.height;
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width);
+            width = maxDim;
+          } else {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = () => resolve(dataUrl);
+      img.src = dataUrl;
+    });
+  };
+
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -247,16 +274,18 @@ export default function CameraIdCapture({
       return;
     }
 
-    if (file.size > 8 * 1024 * 1024) {
-      setCameraError("ID card file size exceeds 8MB limit. Please choose a smaller image.");
-      return;
-    }
-
     const reader = new FileReader();
-    reader.onload = () => {
-      onImageSelected(reader.result, file.name, file);
-      setCameraError(null);
-      setMode('IDLE');
+    reader.onload = async () => {
+      try {
+        const compressed = await compressImage(reader.result, 1600, 0.85);
+        onImageSelected(compressed, file.name, file);
+        setCameraError(null);
+        setMode('IDLE');
+      } catch (e) {
+        onImageSelected(reader.result, file.name, file);
+        setCameraError(null);
+        setMode('IDLE');
+      }
     };
     reader.onerror = () => {
       setCameraError("Failed to read the selected file. Please try again.");

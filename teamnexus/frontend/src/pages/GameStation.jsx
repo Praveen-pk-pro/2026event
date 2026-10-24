@@ -26,9 +26,9 @@ export default function GameStation() {
   const [gameState, setGameState] = useState(STATES.VERIFY);
   const [countdown, setCountdown] = useState(3);
 
-  // Access inputs - default pre-filled with verified active event test team
-  const [inputTeamCode, setInputTeamCode] = useState('ATS-0104');
-  const [inputAccessCode, setInputAccessCode] = useState('ATS-2026-PLAY');
+  // Access inputs - Clean default for event participants
+  const [inputTeamCode, setInputTeamCode] = useState('');
+  const [inputAccessCode, setInputAccessCode] = useState('');
   const [selectedDifficulty, setSelectedDifficulty] = useState('MEDIUM');
 
   // Active Session info
@@ -36,6 +36,8 @@ export default function GameStation() {
   const [sessionToken, setSessionToken] = useState(null);
   const [errorMsg, setErrorMsg] = useState(null);
   const [loadingVerify, setLoadingVerify] = useState(false);
+  const [cachedTelemetry, setCachedTelemetry] = useState(null);
+  const [showOperatorPanel, setShowOperatorPanel] = useState(false);
 
   // Live HUD
   const [hudStats, setHudStats] = useState({
@@ -130,34 +132,6 @@ export default function GameStation() {
     esp32Service.resetDiagnostics();
   };
 
-  const [autoUserGenerating, setAutoUserGenerating] = useState(false);
-  const [autoUserSuccess, setAutoUserSuccess] = useState(null);
-
-  const handleGenerateAndFillAutoUser = async () => {
-    setAutoUserGenerating(true);
-    setErrorMsg(null);
-    try {
-      const res = await api.createAutoUser();
-      if (res && res.success) {
-        setInputTeamCode(res.team_code);
-        setInputAccessCode(res.access_code);
-        setSelectedDifficulty('MEDIUM');
-        setAutoUserSuccess(`Auto User ${res.team_code} Generated!`);
-        setTimeout(() => setAutoUserSuccess(null), 4000);
-      } else {
-        setErrorMsg(res?.error || 'Failed to auto-generate user ID.');
-      }
-    } catch (err) {
-      // Fallback to pre-seeded auto user
-      setInputTeamCode('ATS-0104');
-      setInputAccessCode('ATS-2026-PLAY');
-      setSelectedDifficulty('MEDIUM');
-      setAutoUserSuccess('Loaded ATS-0104');
-      setTimeout(() => setAutoUserSuccess(null), 4000);
-    } finally {
-      setAutoUserGenerating(false);
-    }
-  };
 
   const handleSimulateTrigger = () => {
     esp32Service.simulateTrigger();
@@ -322,11 +296,13 @@ export default function GameStation() {
   // Handle Game End & Submit Telemetry to Server
   const handleOfficialGameEnd = async (telemetry) => {
     setGameState(STATES.SUBMITTING);
+    if (telemetry) setCachedTelemetry(telemetry);
+    const dataToSubmit = telemetry || cachedTelemetry;
 
     try {
       const payload = {
         session_token: sessionToken,
-        ...telemetry
+        ...dataToSubmit
       };
 
       const res = await api.submitGameSession(payload);
@@ -700,51 +676,31 @@ export default function GameStation() {
               </div>
             )}
 
-            {/* AUTO USER ID & 1-CLICK QUICK ACCESS BANNER */}
-            <div className="mb-5 p-4 rounded-2xl bg-gradient-to-r from-cyan-950/50 to-indigo-950/50 border border-cyan-500/40 shadow-xl relative overflow-hidden">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <div className="text-xs font-mono font-bold text-cyan-300 flex items-center gap-1.5">
-                    <Zap className="w-4 h-4 fill-current text-cyan-400" />
-                    <span>AUTO USER ID READY</span>
-                    {autoUserSuccess && (
-                      <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 text-[10px] font-mono animate-pulse">
-                        ✓ {autoUserSuccess}
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-[11px] text-slate-300 font-mono mt-1">
-                    Team ID: <span className="text-cyan-300 font-bold font-mono">ATS-0104</span> • Access Code: <span className="text-amber-300 font-bold font-mono">ATS-2026-PLAY</span>
-                  </div>
+            {/* OPERATOR QUICK-TOOLS (Only shown when toggled) */}
+            {showOperatorPanel && queueTeams.length > 0 && (
+              <div className="mb-5 p-3 rounded-xl bg-slate-900 border border-amber-500/30">
+                <div className="text-[10px] font-mono uppercase text-amber-400 tracking-wider mb-2 font-bold flex items-center gap-1.5">
+                  <ShieldAlert className="w-3.5 h-3.5" />
+                  <span>Operator Mode: Live Queue Quick-Select</span>
                 </div>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setInputTeamCode('ATS-0104');
-                      setInputAccessCode('ATS-2026-PLAY');
-                      setSelectedDifficulty('MEDIUM');
-                      setAutoUserSuccess('Loaded ATS-0104');
-                      setTimeout(() => setAutoUserSuccess(null), 3000);
-                    }}
-                    className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-mono font-bold text-slate-200 hover:text-white transition shadow-sm"
-                  >
-                    1-Click Fill ATS-0104
-                  </button>
-
-                  <button
-                    type="button"
-                    disabled={autoUserGenerating}
-                    onClick={handleGenerateAndFillAutoUser}
-                    className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-white text-xs font-mono font-bold shadow-lg shadow-cyan-500/25 transition flex items-center gap-1.5 disabled:opacity-50"
-                  >
-                    <Zap className="w-3.5 h-3.5 fill-current" />
-                    <span>{autoUserGenerating ? 'Generating...' : '⚡ Generate New Auto ID'}</span>
-                  </button>
+                <div className="flex flex-wrap gap-2">
+                  {queueTeams.slice(0, 6).map((t) => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => setInputTeamCode(t.team_code)}
+                      className={`px-3 py-1.5 rounded-lg border text-xs font-mono font-medium transition ${
+                        inputTeamCode === t.team_code
+                          ? 'bg-amber-500/20 border-amber-500 text-amber-300'
+                          : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700'
+                      }`}
+                    >
+                      {t.team_code} ({t.team_name.slice(0, 14)})
+                    </button>
+                  ))}
                 </div>
               </div>
-            </div>
+            )}
             {queueTeams.length > 0 && (
               <div className="mb-5 p-3 rounded-xl bg-slate-950/70 border border-slate-800">
                 <div className="text-[10px] font-mono uppercase text-slate-400 tracking-wider mb-2">
@@ -1098,6 +1054,73 @@ export default function GameStation() {
               >
                 <RotateCcw className="w-4 h-4" />
                 <span>Next Team Game Access</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* 7. SUBMISSION ERROR SCREEN (TELEMETRY PRESERVED) */}
+        {gameState === STATES.ERROR && (
+          <div className="max-w-xl mx-auto bg-slate-900/95 border border-rose-500/40 rounded-3xl p-8 shadow-2xl backdrop-blur-xl text-center relative overflow-hidden">
+            <div className="w-16 h-16 rounded-2xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-center mx-auto mb-4 text-rose-400">
+              <AlertTriangle className="w-8 h-8" />
+            </div>
+
+            <div className="text-xs font-mono uppercase tracking-widest text-rose-400 font-bold mb-1">
+              SCORE SUBMISSION HALTED
+            </div>
+            <h2 className="text-2xl font-black font-display text-white mb-2">
+              Match Result Not Yet Synced
+            </h2>
+            <p className="text-xs text-rose-200/90 font-mono bg-rose-950/40 border border-rose-800/40 rounded-xl p-3 mb-6 text-left">
+              <strong>Server Response:</strong> {errorMsg || "Connection timed out or server validation failed."}
+            </p>
+
+            {/* Preserved Match Stats */}
+            {cachedTelemetry && (
+              <div className="bg-slate-950 border border-slate-800 rounded-2xl p-4 mb-6 text-left">
+                <div className="text-[10px] font-mono uppercase text-slate-400 tracking-wider mb-2">
+                  Preserved In-Memory Match Telemetry:
+                </div>
+                <div className="grid grid-cols-3 gap-2 font-mono text-center">
+                  <div className="bg-slate-900/60 p-2 rounded-lg border border-slate-800">
+                    <div className="text-[10px] text-slate-400">SCORE</div>
+                    <div className="text-lg font-bold text-emerald-400">{cachedTelemetry.score ?? hudStats.score}</div>
+                  </div>
+                  <div className="bg-slate-900/60 p-2 rounded-lg border border-slate-800">
+                    <div className="text-[10px] text-slate-400">HITS</div>
+                    <div className="text-lg font-bold text-sky-400">{cachedTelemetry.hits ?? hudStats.hits}</div>
+                  </div>
+                  <div className="bg-slate-900/60 p-2 rounded-lg border border-slate-800">
+                    <div className="text-[10px] text-slate-400">ACCURACY</div>
+                    <div className="text-lg font-bold text-amber-400">
+                      {Math.round(((cachedTelemetry.hits ?? hudStats.hits) / Math.max(1, (cachedTelemetry.total_shots ?? hudStats.totalShots))) * 100)}%
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="flex flex-col sm:flex-row gap-3">
+              <button
+                type="button"
+                onClick={() => handleOfficialGameEnd(cachedTelemetry)}
+                className="flex-1 py-3.5 px-5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-mono font-bold text-xs shadow-lg shadow-emerald-500/25 transition flex items-center justify-center gap-2"
+              >
+                <RotateCcw className="w-4 h-4" />
+                <span>Retry Score Upload</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setGameState(STATES.VERIFY);
+                  setActiveSession(null);
+                  setSessionToken(null);
+                }}
+                className="py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-mono transition"
+              >
+                Cancel & Return
               </button>
             </div>
           </div>

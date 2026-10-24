@@ -156,6 +156,22 @@ def register_team():
         conn.close()
         return jsonify({"success": False, "error": "Team registration is currently closed by event organizers."}), 403
 
+    # Event password gate token enforcement
+    if cfg and cfg['event_password_enabled']:
+        auth_header = request.headers.get('Authorization', '') or request.headers.get('X-Event-Pass', '')
+        token = auth_header.replace('Bearer ', '').strip()
+        if not token:
+            conn.close()
+            return jsonify({"success": False, "error": "Event access authentication required. Please unlock the gate."}), 401
+        try:
+            payload = jwt.decode(token, JWT_EVENT_SECRET, algorithms=["HS256"])
+            if payload.get('scope') not in ('event_access', 'registration_access'):
+                conn.close()
+                return jsonify({"success": False, "error": "Invalid gate access token scope."}), 403
+        except Exception:
+            conn.close()
+            return jsonify({"success": False, "error": "Invalid or expired event access token."}), 401
+
     # Extract inputs (Form-Data or JSON)
     p1_file_bytes = None
     p2_file_bytes = None
@@ -243,12 +259,26 @@ def register_team():
         conn.close()
         return jsonify({"success": False, "error": "Player 2 (Shoot) Name, College, and Mobile Number are required."}), 400
 
-    # Phone numbers validation (at least 10 digits)
+    # Phone numbers normalization & validation (10 digits)
     clean_p1_phone = ''.join(filter(str.isdigit, p1_phone))
     clean_p2_phone = ''.join(filter(str.isdigit, p2_phone))
-    if len(clean_p1_phone) < 10 or len(clean_p2_phone) < 10:
+    if len(clean_p1_phone) > 10 and clean_p1_phone.startswith('91'):
+        clean_p1_phone = clean_p1_phone[-10:]
+    elif clean_p1_phone.startswith('0') and len(clean_p1_phone) > 10:
+        clean_p1_phone = clean_p1_phone[-10:]
+
+    if len(clean_p2_phone) > 10 and clean_p2_phone.startswith('91'):
+        clean_p2_phone = clean_p2_phone[-10:]
+    elif clean_p2_phone.startswith('0') and len(clean_p2_phone) > 10:
+        clean_p2_phone = clean_p2_phone[-10:]
+
+    if len(clean_p1_phone) != 10 or len(clean_p2_phone) != 10:
         conn.close()
         return jsonify({"success": False, "error": "Please provide valid 10-digit mobile numbers for both players."}), 400
+
+    if clean_p1_phone == clean_p2_phone:
+        conn.close()
+        return jsonify({"success": False, "error": "Player 1 and Player 2 cannot share the same mobile number."}), 400
 
     # Duplicate check for phone or optional roll number
     dup_conditions = ["phone IN (?, ?)"]
@@ -296,158 +326,102 @@ def register_team():
     os.makedirs(UPLOAD_FOLDER, exist_ok=True)
     p1_storage_key = f"id_p1_{uuid.uuid4().hex}.{p1_ext_or_err}"
     p2_storage_key = f"id_p2_{uuid.uuid4().hex}.{p2_ext_or_err}"
+    p1_path = os.path.join(UPLOAD_FOLDER, p1_storage_key)
+    p2_path = os.path.join(UPLOAD_FOLDER, p2_storage_key)
 
-    with open(os.path.join(UPLOAD_FOLDER, p1_storage_key), 'wb') as f:
+    with open(p1_path, 'wb') as f:
         f.write(p1_file_bytes)
 
-    with open(os.path.join(UPLOAD_FOLDER, p2_storage_key), 'wb') as f:
+    with open(p2_path, 'wb') as f:
         f.write(p2_file_bytes)
 
-    # Generate sequential unique Team Code (e.g. ATS-0042)
-    cursor.execute("SELECT COALESCE(MAX(queue_number), 0) + 1 FROM teams;")
-    next_queue_num = cursor.fetchone()[0]
-    team_code = f"ATS-{next_queue_num:04d}"
-
-    # Generate Cryptographically Secure Game Access Code (e.g. ATS-K7M9-P2QX)
+    # Cryptographically Secure Game Access Code (e.g. ATS-K7M9-P2QX)
     raw_access_code = generate_access_code()
     access_code_hash = hash_access_code(raw_access_code)
 
-    try:
-        # Insert Team
-        cursor.execute("""
-            INSERT INTO teams (team_code, team_name, college_name, queue_number, status)
-            VALUES (?, ?, ?, ?, 'WAITING')
-        """, (team_code, team_name, college_name or p1_college, next_queue_num))
-        team_id = cursor.lastrowid
+    # Concurrency-safe Team Insertion with Retry on queue_number conflict
+    max_retries = 5
+    team_code = None
+    next_queue_num = None
 
-        # Insert Player 1 (Aim)
-        cursor.execute("""
-            INSERT INTO participants (team_id, player_role, name, college, phone, roll_number, id_card_filename)
-            VALUES (?, 'PLAYER_1_AIM', ?, ?, ?, ?, ?)
-        """, (team_id, p1_name, p1_college, clean_p1_phone, p1_roll, p1_storage_key))
-        p1_id = cursor.lastrowid
+    for attempt in range(max_retries):
+        try:
+            cursor.execute("SELECT COALESCE(MAX(queue_number), 0) + 1 FROM teams;")
+            next_queue_num = cursor.fetchone()[0]
+            team_code = f"ATS-{next_queue_num:04d}"
 
-        # Insert Player 2 (Shoot)
-        cursor.execute("""
-            INSERT INTO participants (team_id, player_role, name, college, phone, roll_number, id_card_filename)
-            VALUES (?, 'PLAYER_2_SHOOT', ?, ?, ?, ?, ?)
-        """, (team_id, p2_name, p2_college, clean_p2_phone, p2_roll, p2_storage_key))
-        p2_id = cursor.lastrowid
+            # Insert Team
+            cursor.execute("""
+                INSERT INTO teams (team_code, team_name, college_name, queue_number, status)
+                VALUES (?, ?, ?, ?, 'WAITING')
+            """, (team_code, team_name, college_name or p1_college, next_queue_num))
+            team_id = cursor.lastrowid
 
-        # Insert Private Documents Metadata
-        cursor.execute("""
-            INSERT INTO private_documents (participant_id, private_storage_key, verification_status)
-            VALUES (?, ?, 'PENDING'), (?, ?, 'PENDING')
-        """, (p1_id, p1_storage_key, p2_id, p2_storage_key))
+            # Insert Player 1 (Aim)
+            cursor.execute("""
+                INSERT INTO participants (team_id, player_role, name, college, phone, roll_number, id_card_filename)
+                VALUES (?, 'PLAYER_1_AIM', ?, ?, ?, ?, ?)
+            """, (team_id, p1_name, p1_college, clean_p1_phone, p1_roll, p1_storage_key))
+            p1_id = cursor.lastrowid
 
-        # Insert Hashed Access Credential
-        cursor.execute("""
-            INSERT INTO access_credentials (team_id, credential_hash)
-            VALUES (?, ?)
-        """, (team_id, access_code_hash))
+            # Insert Player 2 (Shoot)
+            cursor.execute("""
+                INSERT INTO participants (team_id, player_role, name, college, phone, roll_number, id_card_filename)
+                VALUES (?, 'PLAYER_2_SHOOT', ?, ?, ?, ?, ?)
+            """, (team_id, p2_name, p2_college, clean_p2_phone, p2_roll, p2_storage_key))
+            p2_id = cursor.lastrowid
 
-        # Log queue event
-        cursor.execute("""
-            INSERT INTO queue_events (team_id, event_type, details, triggered_by)
-            VALUES (?, 'REGISTERED', 'Team registered successfully with camera/file ID verification', 'PUBLIC_PORTAL')
-        """, (team_id,))
+            # Insert Private Documents Metadata
+            cursor.execute("""
+                INSERT INTO private_documents (participant_id, private_storage_key, verification_status)
+                VALUES (?, ?, 'PENDING'), (?, ?, 'PENDING')
+            """, (p1_id, p1_storage_key, p2_id, p2_storage_key))
 
-        conn.commit()
+            # Insert Hashed Access Credential
+            cursor.execute("""
+                INSERT INTO access_credentials (team_id, credential_hash)
+                VALUES (?, ?)
+            """, (team_id, access_code_hash))
 
-        # Emit real-time queue update
-        public_queue = QueueManager.get_public_queue(conn)
-        notify_clients('QUEUE_UPDATE', public_queue)
-        conn.close()
+            # Log queue event
+            cursor.execute("""
+                INSERT INTO queue_events (team_id, event_type, details, triggered_by)
+                VALUES (?, 'REGISTERED', 'Team registered successfully with camera/file ID verification', 'PUBLIC_PORTAL')
+            """, (team_id,))
 
-        return jsonify({
-            "success": True,
-            "message": "Team registration confirmed!",
-            "team_code": team_code,
-            "access_code": raw_access_code,  # Displayed once to user!
-            "queue_number": next_queue_num,
-            "team_name": team_name,
-            "college_name": college_name or p1_college,
-            "status": "WAITING"
-        }), 201
+            conn.commit()
+            break
 
-    except Exception as e:
-        conn.rollback()
-        conn.close()
-        return jsonify({"success": False, "error": f"Failed to register team: {str(e)}"}), 500
+        except sqlite3.IntegrityError:
+            conn.rollback()
+            if attempt == max_retries - 1:
+                if os.path.exists(p1_path): os.remove(p1_path)
+                if os.path.exists(p2_path): os.remove(p2_path)
+                conn.close()
+                return jsonify({"success": False, "error": "System was busy allocating queue slots. Please try again."}), 500
+            time.sleep(0.04 * (attempt + 1))
+        except Exception as ex:
+            conn.rollback()
+            if os.path.exists(p1_path): os.remove(p1_path)
+            if os.path.exists(p2_path): os.remove(p2_path)
+            conn.close()
+            return jsonify({"success": False, "error": f"Registration failed: {str(ex)}"}), 500
 
+    # Emit real-time queue update
+    public_queue = QueueManager.get_public_queue(conn)
+    notify_clients('QUEUE_UPDATE', public_queue)
+    conn.close()
 
-# -------------------------------------------------------------
-# 1.5. AUTO USER / DEMO TEAM GENERATOR
-# -------------------------------------------------------------
-@api_bp.route('/auto-user/create', methods=['POST', 'GET'])
-def create_auto_user():
-    """Create a verified, ready-to-play auto user ID and game access code on demand"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    try:
-        cursor.execute("SELECT COALESCE(MAX(queue_number), 0) + 1 FROM teams;")
-        next_q = cursor.fetchone()[0]
-
-        team_code = f"ATS-{next_q:04d}"
-        raw_access_code = generate_access_code()
-        access_hash = hash_access_code(raw_access_code)
-        team_name = f"AUTO PILOT {next_q:04d}"
-        college = "Nexus Autonomous Systems"
-
-        # Insert team
-        cursor.execute("""
-            INSERT INTO teams (team_code, team_name, college_name, queue_number, status)
-            VALUES (?, ?, ?, ?, 'WAITING')
-        """, (team_code, team_name, college, next_q))
-        team_id = cursor.lastrowid
-
-        # Insert Player 1 & 2
-        cursor.execute("""
-            INSERT INTO participants (team_id, player_role, name, college, phone, roll_number, id_card_filename)
-            VALUES (?, 'PLAYER_1_AIM', 'Auto Aim Player', ?, '9876500001', 'AUTO-01', 'auto_id.png')
-        """, (team_id, college))
-
-        cursor.execute("""
-            INSERT INTO participants (team_id, player_role, name, college, phone, roll_number, id_card_filename)
-            VALUES (?, 'PLAYER_2_SHOOT', 'Auto Shoot Player', ?, '9876500002', 'AUTO-02', 'auto_id.png')
-        """, (team_id, college))
-
-        # Insert Access Credential
-        cursor.execute("""
-            INSERT INTO access_credentials (team_id, credential_hash)
-            VALUES (?, ?)
-        """, (team_id, access_hash))
-
-        # Queue Event
-        cursor.execute("""
-            INSERT INTO queue_events (team_id, event_type, details, triggered_by)
-            VALUES (?, 'REGISTERED', 'On-demand auto user created for instant gameplay', 'AUTO_PORTAL')
-        """, (team_id,))
-
-        conn.commit()
-
-        # Notify queue clients
-        public_queue = QueueManager.get_public_queue(conn)
-        notify_clients('QUEUE_UPDATE', public_queue)
-        conn.close()
-
-        return jsonify({
-            "success": True,
-            "message": "Auto User ID successfully generated!",
-            "team_code": team_code,
-            "access_code": raw_access_code,
-            "team_name": team_name,
-            "queue_number": next_q,
-            "status": "WAITING"
-        }), 201
-
-    except Exception as e:
-        conn.rollback()
-        conn.close()
-        return jsonify({"success": False, "error": f"Failed to generate auto user: {str(e)}"}), 500
-
-
+    return jsonify({
+        "success": True,
+        "message": "Team registration confirmed!",
+        "team_code": team_code,
+        "access_code": raw_access_code,  # Displayed once to user!
+        "queue_number": next_queue_num,
+        "team_name": team_name,
+        "college_name": college_name or p1_college,
+        "status": "WAITING"
+    }), 201
 # -------------------------------------------------------------
 # 2. GAME ACCESS & VERIFICATION HANDSHAKE
 # -------------------------------------------------------------

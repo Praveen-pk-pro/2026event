@@ -35,17 +35,19 @@ def test_anti_cheat_rejects_hits_greater_than_shots():
     assert not is_valid
     assert "cannot exceed total shots" in err
 
-def test_anti_cheat_rejects_hits_exceeding_max_targets():
+def test_anti_cheat_accepts_high_hit_time_based_run():
+    # 45 hits in a 7-minute match must be accepted (R1 fix)
     telemetry = {
-        "score": 3000,
-        "hits": 25,
-        "misses": 5,
-        "total_shots": 30,
-        "duration_ms": 35000
+        "score": 12500,
+        "hits": 45,
+        "misses": 15,
+        "total_shots": 60,
+        "duration_ms": 280000
     }
-    is_valid, data, err = AntiCheatEngine.validate_session_result({}, telemetry, {"game_mode": "MODE_TARGETS", "target_count": 20})
-    assert not is_valid
-    assert "exceed total targets" in err
+    is_valid, data, err = AntiCheatEngine.validate_session_result({}, telemetry, {"game_mode": "TIME_BASED"})
+    assert is_valid
+    assert err is None
+    assert data["hits"] == 45
 
 def test_anti_cheat_detects_bot_rapid_fire():
     # Shots with 20ms delta (<70ms minimum threshold)

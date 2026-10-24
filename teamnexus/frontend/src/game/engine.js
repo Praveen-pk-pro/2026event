@@ -170,6 +170,7 @@ export class TargetStrikeEngine {
     this.boundMouseMove = this.handleMouseMove.bind(this);
     this.boundMouseDown = this.handleMouseDown.bind(this);
     this.boundResize = this.handleResize.bind(this);
+    this.boundBlur = this.handleBlur.bind(this);
 
     // 3D Scene Properties
     this.is3D = false;
@@ -438,6 +439,7 @@ export class TargetStrikeEngine {
       window.addEventListener('keydown', this.boundKeyDown);
       window.addEventListener('keyup', this.boundKeyUp);
       window.addEventListener('resize', this.boundResize);
+      window.addEventListener('blur', this.boundBlur);
     }
     if (this.canvas) {
       this.canvas.addEventListener('mousemove', this.boundMouseMove);
@@ -459,6 +461,7 @@ export class TargetStrikeEngine {
       window.removeEventListener('keydown', this.boundKeyDown);
       window.removeEventListener('keyup', this.boundKeyUp);
       window.removeEventListener('resize', this.boundResize);
+      window.removeEventListener('blur', this.boundBlur);
     }
     if (this.canvas) {
       this.canvas.removeEventListener('mousemove', this.boundMouseMove);
@@ -537,24 +540,38 @@ export class TargetStrikeEngine {
   handleKeyDown(e) {
     if (!this.isRunning || this.isPaused) return;
 
-    const key = e.key.toLowerCase();
-    if (['w', 'a', 's', 'd'].includes(key)) {
-      this.keys[key] = true;
+    const code = e.code;
+    const key = e.key ? e.key.toLowerCase() : '';
+    if (code === 'KeyW' || key === 'w') {
+      this.keys.w = true;
       e.preventDefault();
-    } else if (e.code === 'Space') {
-      // Prompt Requirement 5: "The SPACE key must NOT shoot."
-      // We explicitly prevent default and do NOT fire any weapon!
+    } else if (code === 'KeyA' || key === 'a') {
+      this.keys.a = true;
+      e.preventDefault();
+    } else if (code === 'KeyS' || key === 's') {
+      this.keys.s = true;
+      e.preventDefault();
+    } else if (code === 'KeyD' || key === 'd') {
+      this.keys.d = true;
+      e.preventDefault();
+    } else if (code === 'Space') {
+      // Spacebar is explicitly disabled from shooting
       e.preventDefault();
     }
   }
 
   handleKeyUp(e) {
-    const key = e.key.toLowerCase();
-    if (['w', 'a', 's', 'd'].includes(key)) {
-      this.keys[key] = false;
-    } else if (e.code === 'Space') {
-      this.keys.space = false;
-    }
+    const code = e.code;
+    const key = e.key ? e.key.toLowerCase() : '';
+    if (code === 'KeyW' || key === 'w') this.keys.w = false;
+    if (code === 'KeyA' || key === 'a') this.keys.a = false;
+    if (code === 'KeyS' || key === 's') this.keys.s = false;
+    if (code === 'KeyD' || key === 'd') this.keys.d = false;
+    if (code === 'Space') this.keys.space = false;
+  }
+
+  handleBlur() {
+    this.keys = { w: false, a: false, s: false, d: false, space: false };
   }
 
   handleMouseMove(e) {
