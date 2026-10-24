@@ -158,13 +158,17 @@ def register_team():
 
     # Event password gate token enforcement
     if cfg and cfg['event_password_enabled']:
-        auth_header = request.headers.get('Authorization', '') or request.headers.get('X-Event-Pass', '')
-        token = auth_header.replace('Bearer ', '').strip()
+        token_str = (
+            request.headers.get('X-Event-Pass', '').strip()
+            or request.headers.get('Authorization', '').strip()
+        )
+        token = token_str.replace('Bearer ', '').strip()
         if not token:
             conn.close()
             return jsonify({"success": False, "error": "Event access authentication required. Please unlock the gate."}), 401
         try:
-            payload = jwt.decode(token, JWT_EVENT_SECRET, algorithms=["HS256"])
+            secret = current_app.config.get('JWT_EVENT_SECRET') or current_app.config.get('SECRET_KEY')
+            payload = jwt.decode(token, secret, algorithms=["HS256"])
             if payload.get('scope') not in ('event_access', 'registration_access'):
                 conn.close()
                 return jsonify({"success": False, "error": "Invalid gate access token scope."}), 403
