@@ -117,16 +117,16 @@ export class TargetStrikeEngine {
     const initialWidth = canvas?.width || 960;
     const initialHeight = canvas?.height || 540;
 
-    // Dynamic Sensitivity System (Alternates between Low/Slow & High/Fast on each hit)
-    this.baseAimSpeed = 8.5;
+    // Dynamic Sensitivity System (Fine, inch-by-inch controllable precision aiming)
+    this.baseAimSpeed = 2.4;
     this.sensitivityModes = [
-      { level: 0.55, name: 'HEAVY DRAG', desc: 'SLOW', color: '#f59e0b', tag: '0.55x SLOW' },
-      { level: 0.85, name: 'TACTICAL', desc: 'STEADY', color: '#10b981', tag: '0.85x STEADY' },
-      { level: 1.25, name: 'BALANCED', desc: 'NORMAL', color: '#06b6d4', tag: '1.25x NORMAL' },
-      { level: 1.65, name: 'AGILE TWITCH', desc: 'FAST', color: '#a855f7', tag: '1.65x FAST' },
-      { level: 2.15, name: 'HYPER OVERDRIVE', desc: 'HYPER', color: '#f43f5e', tag: '2.15x HYPER' }
+      { level: 0.8, name: 'PRECISION', desc: 'FINE', color: '#10b981', tag: '0.8x FINE' },
+      { level: 0.9, name: 'TACTICAL', desc: 'STEADY', color: '#06b6d4', tag: '0.9x STEADY' },
+      { level: 1.0, name: 'BALANCED', desc: 'NORMAL', color: '#38bdf8', tag: '1.0x NORMAL' },
+      { level: 1.15, name: 'AGILE', desc: 'SMOOTH', color: '#a855f7', tag: '1.15x SMOOTH' },
+      { level: 1.25, name: 'RESPONSIVE', desc: 'DYNAMIC', color: '#f59e0b', tag: '1.25x DYN' }
     ];
-    this.currentSensitivityIndex = 2; // Start balanced (1.25x)
+    this.currentSensitivityIndex = 2; // Start balanced (1.0x)
     this.aimSensitivity = this.sensitivityModes[this.currentSensitivityIndex].level;
 
     this.crosshair = {
@@ -136,7 +136,7 @@ export class TargetStrikeEngine {
       vy: 0,
       radius: 20,
       speed: this.baseAimSpeed * this.aimSensitivity,
-      friction: 0.88,
+      friction: 0.65,
       color: '#06b6d4',
       isOverTarget: false
     };
@@ -190,14 +190,18 @@ export class TargetStrikeEngine {
     if (typeof window === 'undefined') return;
     try {
       this.bgImage = new Image();
-      this.bgImage.src = '/assets/fps_reference_bg.jpg';
       this.bgImage.onload = () => {
         this.bgLoaded = true;
       };
       this.bgImage.onerror = () => {
-        console.warn('[Engine] Backdrop image could not be loaded, using fallback shader');
-        this.bgLoaded = false;
+        if (this.bgImage && !this.bgImage.src.includes('fps_background.png')) {
+          this.bgImage.src = '/assets/fps_background.png';
+        } else {
+          console.warn('[Engine] Backdrop image could not be loaded, using fallback shader');
+          this.bgLoaded = false;
+        }
       };
+      this.bgImage.src = '/assets/fps_reference_bg.jpg';
     } catch (e) {
       this.bgLoaded = false;
     }
@@ -425,26 +429,19 @@ export class TargetStrikeEngine {
   // DYNAMIC SENSITIVITY FLUCTUATION (SLOW <--> FAST)
   // ==========================================================================
   fluctuateAimSensitivity() {
-    // If currently fast (>= 1.25), switch to slow/heavy (index 0 or 1)
-    // If currently slow (< 1.25), switch to fast/hyper (index 3 or 4)
-    let nextIndex;
-    if (this.aimSensitivity >= 1.25) {
-      nextIndex = Math.random() < 0.5 ? 0 : 1;
-    } else {
-      nextIndex = Math.random() < 0.5 ? 3 : 4;
-    }
-
+    // Gently cycle or shift within stable, controllable sensitivity range
+    const nextIndex = (this.currentSensitivityIndex + 1) % this.sensitivityModes.length;
     this.currentSensitivityIndex = nextIndex;
     const mode = this.sensitivityModes[nextIndex];
     this.aimSensitivity = mode.level;
     this.crosshair.speed = this.baseAimSpeed * this.aimSensitivity;
 
-    // Display high-visibility tactical sensitivity shift alert
+    // Display smooth tactical sensitivity shift alert
     this.floatingTexts.push({
-      text: `⚠️ SENSITIVITY SHIFT: ${mode.desc} (${mode.tag})`,
+      text: `SENSITIVITY: ${mode.desc} (${mode.tag})`,
       x: this.crosshair.x,
       y: Math.max(30, this.crosshair.y - 48),
-      alpha: 1.2,
+      alpha: 1.0,
       color: mode.color
     });
   }
