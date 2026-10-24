@@ -885,11 +885,33 @@ export default function GameStation() {
                   }`}>
                     STAGE: {hudStats.currentDifficulty || activeSession?.difficulty || 'EASY'}
                   </span>
+                  {hudStats.currentTarget && (
+                    <span
+                      style={{ borderColor: hudStats.currentTarget.color }}
+                      className="px-2 py-0.5 rounded-full border bg-slate-950 text-[10px] font-mono font-extrabold tracking-wider text-white flex items-center gap-1"
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full animate-ping" style={{ backgroundColor: hudStats.currentTarget.color }}></span>
+                      <span>TARGET {hudStats.targetProgress}: {hudStats.currentTarget.name.toUpperCase()}</span>
+                    </span>
+                  )}
                 </div>
                 <div className="text-lg font-black text-white leading-tight">
                   {activeSession?.team_name}
                 </div>
               </div>
+
+              {/* DYNAMIC AIM SENSITIVITY BADGE */}
+              {hudStats.sensitivityLabel && (
+                <div className="px-3.5 py-1.5 rounded-xl bg-slate-950 border border-amber-500/40 text-center">
+                  <div className="text-[9px] font-mono uppercase text-slate-400 tracking-wider">
+                    Dynamic Aim Speed
+                  </div>
+                  <div className="text-xs font-black font-mono text-amber-300 tracking-wider flex items-center gap-1">
+                    <span className="animate-spin">⚙</span>
+                    <span>{hudStats.sensitivityLabel}</span>
+                  </div>
+                </div>
+              )}
 
               {/* 7-MINUTE TIMER DISPLAY */}
               <div className="px-5 py-2 rounded-xl bg-slate-950 border border-cyan-500/40 text-center shadow-[0_0_15px_rgba(6,182,212,0.15)]">
@@ -972,9 +994,15 @@ export default function GameStation() {
                   <Zap className="w-3.5 h-3.5 fill-current text-indigo-400" />
                   <span>SHOOT: MOUSE LEFT-CLICK or ESP32 TRIGGER</span>
                 </span>
+                {hudStats.sensitivityLabel && (
+                  <span className="px-2.5 py-1 rounded-lg bg-slate-800 border border-amber-500/40 text-amber-300 font-bold flex items-center gap-1.5">
+                    <span className="animate-pulse">⚡</span>
+                    <span>AIM SENSITIVITY: {hudStats.sensitivityLabel}</span>
+                  </span>
+                )}
               </div>
               <div>
-                Hits: <span className="text-white font-bold">{hudStats.hits}</span> / Shots: <span className="text-white font-bold">{hudStats.totalShots}</span>
+                AI Targets Hit: <span className="text-emerald-400 font-bold">{hudStats.hits}</span> / Shots: <span className="text-white font-bold">{hudStats.totalShots}</span>
               </div>
             </div>
           </div>
